@@ -1,0 +1,620 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+  // ✅ Genera el cliente en /generated/prisma en vez de node_modules
+  // Así TypeScript lo encuentra siempre y evita el error de exportación
+  // output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  // ✅ Prisma 7: la URL va en prisma.config.ts, NO aquí
+}
+
+// ─────────────────────────────────────────
+// SUSCRIPCIONES
+// ─────────────────────────────────────────
+
+model Plan {
+  plan_id          Int      @id @default(autoincrement())
+  plan_nombre      String   @unique @db.VarChar(50)
+  plan_descripcion String?  @db.VarChar(255)
+  plan_precio      Decimal  @db.Decimal(10, 2)
+  plan_moneda      String   @default("USD") @db.VarChar(3)
+  max_usuarios     Int      @default(1)
+  max_sucursales   Int      @default(1)
+  max_facturas_mes Int      @default(100)
+  max_items        Int      @default(500)
+  plan_activo      Boolean  @default(true)
+  plan_visible     Boolean  @default(true) // false = oculto al público (ej. OWNED)
+  plan_creadoEn    DateTime @default(now())
+
+  suscripciones Suscripcion[]
+
+  @@map("planes")
+}
+
+enum EstadoSuscripcion {
+  ACTIVA
+  VENCIDA
+  SUSPENDIDA
+  CANCELADA
+  TRIAL
+}
+
+model Suscripcion {
+  suscripcion_id        Int               @id @default(autoincrement())
+  empresa_id            Int               @unique
+  plan_id               Int
+  estado                EstadoSuscripcion @default(TRIAL)
+  fecha_inicio          DateTime          @db.Date
+  fecha_vencimiento     DateTime          @db.Date
+  fecha_cancelacion     DateTime?         @db.Date
+  renovacion_automatica Boolean           @default(true)
+  suscripcion_creadoEn  DateTime          @default(now())
+
+  empresa Empresa @relation(fields: [empresa_id], references: [empresas_id])
+  plan    Plan    @relation(fields: [plan_id], references: [plan_id])
+
+  @@map("suscripciones")
+}
+
+// ─────────────────────────────────────────
+// CATÁLOGOS GLOBALES
+// ─────────────────────────────────────────
+
+model Regimen {
+  regimenes_id     Int       @id @default(autoincrement())
+  regimenes_nombre String    @unique @db.VarChar(100)
+  empresas         Empresa[]
+
+  @@map("regimenes")
+}
+
+model Role {
+  rol_id          Int     @id @default(autoincrement())
+  rol_nombre      String  @unique @db.VarChar(50)
+  rol_descripcion String? @db.VarChar(255)
+
+  usuarioEmpresas UsuarioEmpresa[]
+
+  @@map("roles")
+}
+
+model TipoIdentificacionSri {
+  codigo      String @id @db.Char(2)
+  descripcion String @db.VarChar(50)
+
+  clientes    Cliente[]
+  proveedores Proveedor[]
+
+  @@map("tipo_identificacion_sri")
+}
+
+model TipoImpuesto {
+  tipo_impuesto_id          Int     @id @default(autoincrement())
+  tipo_impuesto_codigo_sri  String  @unique @db.VarChar(2)
+  tipo_impuesto_nombre      String  @db.VarChar(50)
+  tipo_impuesto_descripcion String? @db.VarChar(255)
+
+  tarifas TarifaImpuesto[]
+
+  @@map("tipo_impuesto")
+}
+
+model TarifaImpuesto {
+  tarifa_impuesto_id  Int       @id @default(autoincrement())
+  tipo_impuesto_id    Int
+  tarifa_codigo_sri   String    @db.VarChar(2)
+  tarifa_porcentaje   Decimal   @db.Decimal(5, 2)
+  tarifa_nombre       String    @db.VarChar(50)
+  tarifa_descripcion  String    @db.VarChar(100)
+  tarifa_fecha_inicio DateTime  @db.Date
+  tarifa_fecha_fin    DateTime? @db.Date
+
+  tipoImpuesto  TipoImpuesto   @relation(fields: [tipo_impuesto_id], references: [tipo_impuesto_id])
+  items         Item[]
+  detalleVentas DetalleVenta[]
+
+  @@unique([tipo_impuesto_id, tarifa_codigo_sri])
+  @@map("tarifa_impuesto")
+}
+
+model TipoItem {
+  tipo_item_id          Int     @id @default(autoincrement())
+  tipo_item_nombre      String  @unique @db.VarChar(50)
+  tipo_item_descripcion String? @db.VarChar(255)
+
+  items Item[]
+
+  @@map("tipo_item")
+}
+
+model FormaPago {
+  forma_pago_id Int    @id @default(autoincrement())
+  nombre        String @db.VarChar(100)
+  codigo        String @unique @db.VarChar(2)
+
+  ventas Venta[]
+
+  @@map("forma_pago")
+}
+
+model TipoComprobante {
+  tipo_comprobante_id Int    @id @default(autoincrement())
+  nombre              String @db.VarChar(100)
+  codigo              String @unique @db.VarChar(2)
+  abreviatura         String @unique @db.VarChar(45)
+
+  ventas Venta[]
+
+  @@map("tipo_comprobante")
+}
+
+model EstadoSri {
+  estado_sri_id Int    @id @default(autoincrement())
+  codigo        String @unique @db.VarChar(20)
+  descripcion   String @db.VarChar(255)
+
+  facturas Factura[]
+
+  @@map("estado_sri")
+}
+
+model EstadoNumeracion {
+  estado_id     Int    @id @default(autoincrement()) @db.SmallInt
+  estado_nombre String @unique @db.VarChar(20)
+
+  numeraciones FacturaNumeracion[]
+
+  @@map("estados_numeracion")
+}
+
+model Pais {
+  pais_id     Int     @id @default(autoincrement())
+  codigo_iso  String  @unique @db.Char(3) // ECU, USA, COL, PER...
+  nombre      String  @db.VarChar(100)
+  codigo_iso2 String  @db.Char(2) // EC, US, CO — útil para banderas
+  activo      Boolean @default(true)
+
+  proveedores Proveedor[]
+
+  @@map("paises")
+}
+
+model TipoDocumentoCompra {
+  tipo_doc_id     Int     @id @default(autoincrement())
+  tipo_doc_codigo String  @unique @db.VarChar(10) // FAC, COMP, PROF, LIQ, etc.
+  tipo_doc_nombre String  @db.VarChar(100) // Factura, Comprobante, Proforma...
+  tipo_doc_activo Boolean @default(true)
+
+  compras Compra[]
+
+  @@map("tipo_documento_compra")
+}
+
+model EstadoPagoCompra {
+  estado_pago_id     Int    @id @default(autoincrement())
+  estado_pago_codigo String @unique @db.VarChar(20) // PENDIENTE, PARCIAL, PAGADO
+  estado_pago_nombre String @db.VarChar(50)
+
+  compras Compra[]
+
+  @@map("estado_pago_compra")
+}
+
+// ─────────────────────────────────────────
+// CATÁLOGO GLOBAL: Marcas y Modelos
+// ─────────────────────────────────────────
+
+model Brand {
+  brands_id            Int    @id @default(autoincrement())
+  brands_find_id       String @unique @db.VarChar(50)
+  brands_name          String @unique @db.VarChar(255)
+  brands_devices_count Int    @default(0)
+
+  models Model[]
+
+  @@map("brands")
+}
+
+model Model {
+  models_id          Int     @id @default(autoincrement())
+  models_find_id     String  @unique @db.VarChar(100)
+  models_name        String  @db.VarChar(255)
+  models_brands_id   Int
+  models_img_url     String? @db.VarChar(500)
+  models_description String?
+
+  brand      Brand        @relation(fields: [models_brands_id], references: [brands_id], onDelete: Cascade)
+  itemModelo ItemModelo[]
+
+  @@map("models")
+}
+
+// ─────────────────────────────────────────
+// TENANT: Empresa
+// ─────────────────────────────────────────
+
+model Empresa {
+  empresas_id                   Int      @id @default(autoincrement())
+  empresas_razonSocial          String   @db.VarChar(255)
+  empresas_nombreComercial      String?  @db.VarChar(255)
+  empresas_ruc                  String   @unique @db.Char(13)
+  empresas_dirMatriz            String   @db.VarChar(255)
+  empresas_telefono             String?  @db.VarChar(20)
+  empresa_email                 String   @unique @db.VarChar(100)
+  empresas_obligadocontabilidad Boolean  @default(false)
+  empresas_regimenes_id         Int?
+  empresas_agenteRetencion      Boolean  @default(false)
+  empresas_activa               Boolean  @default(true)
+  empresas_creadoEn             DateTime @default(now())
+
+  regimen                Regimen?                @relation(fields: [empresas_regimenes_id], references: [regimenes_id])
+  suscripcion            Suscripcion?
+  sucursales             Sucursal[]
+  firmas                 Firma[]
+  usuarioEmpresas        UsuarioEmpresa[]
+  clientes               Cliente[]
+  items                  Item[]
+  ventas                 Venta[]
+  clienteCamposAdicional ClienteCampoAdicional[]
+  proveedores            Proveedor[]
+  compras                Compra[]
+
+  @@map("empresas")
+}
+
+model Usuario {
+  usuarios_id       Int      @id @default(autoincrement())
+  usuarios_username String   @unique @db.VarChar(50)
+  usuarios_nombre   String   @db.VarChar(100)
+  usuarios_email    String   @unique @db.VarChar(100)
+  usuarios_password String   @db.VarChar(255)
+  usuarios_activo   Boolean  @default(false)
+  usuarios_creadoEn DateTime @default(now())
+
+  empresas UsuarioEmpresa[]
+  facturas Factura[]
+  ventas   Venta[]
+  compras  Compra[]
+
+  @@map("usuarios")
+}
+
+model UsuarioEmpresa {
+  usuario_empresa_id        Int      @id @default(autoincrement())
+  usuario_empresa_usuarioId Int
+  usuario_empresa_empresaId Int
+  usuario_empresa_codEmi    String   @default("001") @db.VarChar(20)
+  usuario_empresa_rolId     Int
+  fecha_asignacion          DateTime @default(now())
+
+  usuario Usuario @relation(fields: [usuario_empresa_usuarioId], references: [usuarios_id])
+  empresa Empresa @relation(fields: [usuario_empresa_empresaId], references: [empresas_id])
+  rol     Role    @relation(fields: [usuario_empresa_rolId], references: [rol_id])
+
+  @@unique([usuario_empresa_usuarioId, usuario_empresa_empresaId])
+  @@map("usuario_empresa")
+}
+
+// ─────────────────────────────────────────
+// TENANT-SCOPED
+// ─────────────────────────────────────────
+
+model Sucursal {
+  sucursales_id        Int     @id @default(autoincrement())
+  sucursales_empresaId Int
+  sucursales_cod       String  @default("001") @db.VarChar(20)
+  sucursales_nombre    String  @default("MATRIZ") @db.VarChar(100)
+  sucursales_direccion String  @db.VarChar(255)
+  sucursales_telefono  String? @db.VarChar(20)
+  sucursales_esMatriz  Boolean @default(false)
+
+  empresa    Empresa             @relation(fields: [sucursales_empresaId], references: [empresas_id])
+  numeracion FacturaNumeracion[]
+  ventas     Venta[]
+  compras    Compra[]
+
+  @@unique([sucursales_empresaId, sucursales_cod])
+  @@map("sucursales")
+}
+
+model Firma {
+  firmas_id              Int       @id @default(autoincrement())
+  firmas_empresaId       Int
+  firmas_alias           String?   @db.VarChar(100)
+  firmas_rutaArchivo     String    @db.VarChar(255)
+  firmas_password        String    @db.VarChar(255)
+  firmas_fechaEmision    DateTime? @db.Date
+  firmas_fechaExpiracion DateTime? @db.Date
+  firmas_activa          Boolean   @default(true)
+  firmas_creadoEn        DateTime  @default(now())
+
+  empresa Empresa @relation(fields: [firmas_empresaId], references: [empresas_id])
+
+  @@map("firmas")
+}
+
+model Cliente {
+  id                  Int       @id @default(autoincrement())
+  empresa_id          Int
+  identificacion      String    @db.VarChar(20)
+  tipo_identificacion String    @db.Char(2)
+  razon_social        String    @db.VarChar(150)
+  direccion           String?
+  email               String?   @db.VarChar(100)
+  telefono            String?   @db.VarChar(20)
+  es_consumidor_final Boolean   @default(false)
+  deleted_at          DateTime?
+
+  empresa            Empresa                 @relation(fields: [empresa_id], references: [empresas_id])
+  tipoIdentificacion TipoIdentificacionSri   @relation(fields: [tipo_identificacion], references: [codigo])
+  ventas             Venta[]
+  camposAdicionales  ClienteCampoAdicional[]
+
+  @@unique([empresa_id, identificacion])
+  @@map("clientes")
+}
+
+// Campos predefinidos por cliente — actúan como plantilla para prellenar ventas
+// La clave la define libremente cada empresa (ej: "lugar_entrega", "contacto")
+model ClienteCampoAdicional {
+  id         Int    @id @default(autoincrement())
+  empresa_id Int // tenant — para queries directos
+  cliente_id Int
+  clave      String @db.VarChar(100)
+  valor      String @db.VarChar(500)
+
+  empresa Empresa @relation(fields: [empresa_id], references: [empresas_id])
+  cliente Cliente @relation(fields: [cliente_id], references: [id], onDelete: Cascade)
+
+  // Una clave no se repite para el mismo cliente
+  @@unique([cliente_id, clave])
+  @@map("cliente_campos_adicionales")
+}
+
+model Item {
+  item_id                  Int       @id @default(autoincrement())
+  empresa_id               Int
+  item_codigo_principal    String    @db.VarChar(25)
+  item_codigo_auxiliar     String?   @db.VarChar(25)
+  tipo_item_id             Int
+  tarifa_impuesto_id       Int
+  item_nombre              String    @db.VarChar(100)
+  item_descripcion         String?
+  item_precio_unitario     Decimal   @db.Decimal(12, 2)
+  item_activo              Boolean   @default(true)
+  item_fecha_creacion      DateTime  @default(now())
+  item_fecha_actualizacion DateTime? @updatedAt
+
+  empresa        Empresa         @relation(fields: [empresa_id], references: [empresas_id])
+  tipoItem       TipoItem        @relation(fields: [tipo_item_id], references: [tipo_item_id])
+  tarifaImpuesto TarifaImpuesto  @relation(fields: [tarifa_impuesto_id], references: [tarifa_impuesto_id])
+  lotes          ItemLote[]
+  modelos        ItemModelo[]
+  detallesVenta  DetalleVenta[]
+  detallesCompra DetalleCompra[]
+
+  @@unique([empresa_id, item_codigo_principal])
+  @@map("items")
+}
+
+model ItemLote {
+  lote_id       Int      @id @default(autoincrement())
+  item_id       Int
+  numero_lote   String   @db.VarChar(50)
+  cantidad      Int
+  fecha_ingreso DateTime @default(now())
+  observaciones String?
+
+  item           Item            @relation(fields: [item_id], references: [item_id])
+  detalleVentas  DetalleVenta[]
+  detallesCompra DetalleCompra[]
+
+  @@map("item_lotes")
+}
+
+model ItemModelo {
+  item_modelo_id       Int     @id @default(autoincrement())
+  item_id              Int
+  models_id            Int
+  compatibilidad_notas String? @db.VarChar(255)
+
+  item  Item  @relation(fields: [item_id], references: [item_id], onDelete: Cascade)
+  model Model @relation(fields: [models_id], references: [models_id], onDelete: Cascade)
+
+  @@unique([item_id, models_id])
+  @@map("item_modelo")
+}
+
+model Venta {
+  venta_id             Int      @id @default(autoincrement())
+  empresa_id           Int
+  cliente_id           Int
+  fecha_emision        DateTime
+  tipo_comprobante_id  Int
+  moneda               String   @default("USD") @db.VarChar(3)
+  forma_pago_id        Int
+  plazo_pago           String?  @db.VarChar(20)
+  observaciones        String?
+  subtotal             Decimal  @db.Decimal(10, 2)
+  descuento_total      Decimal  @default(0) @db.Decimal(10, 2)
+  iva                  Decimal  @default(0) @db.Decimal(10, 2)
+  propina              Decimal  @default(0) @db.Decimal(10, 2)
+  total                Decimal  @db.Decimal(10, 2)
+  fecha_creacion       DateTime @default(now())
+  numero_venta         String   @db.VarChar(45)
+  ventas_usuario_id    Int?
+  ventas_sucursales_id Int?
+
+  empresa           Empresa               @relation(fields: [empresa_id], references: [empresas_id])
+  cliente           Cliente               @relation(fields: [cliente_id], references: [id])
+  tipoComprobante   TipoComprobante       @relation(fields: [tipo_comprobante_id], references: [tipo_comprobante_id])
+  formaPago         FormaPago             @relation(fields: [forma_pago_id], references: [forma_pago_id])
+  usuario           Usuario?              @relation(fields: [ventas_usuario_id], references: [usuarios_id])
+  sucursal          Sucursal?             @relation(fields: [ventas_sucursales_id], references: [sucursales_id])
+  detalles          DetalleVenta[]
+  factura           Factura?
+  camposAdicionales VentaCampoAdicional[]
+
+  @@unique([empresa_id, numero_venta])
+  @@map("ventas")
+}
+
+// Campos adicionales de una venta/factura específica
+// Se precargan desde ClienteCampoAdicional pero pueden editarse o agregarse nuevos
+model VentaCampoAdicional {
+  id       Int    @id @default(autoincrement())
+  venta_id Int
+  clave    String @db.VarChar(100)
+  valor    String @db.VarChar(500)
+
+  venta Venta @relation(fields: [venta_id], references: [venta_id], onDelete: Cascade)
+
+  // Una clave no se repite en la misma venta
+  @@unique([venta_id, clave])
+  @@map("venta_campos_adicionales")
+}
+
+model DetalleVenta {
+  detalle_id         Int     @id @default(autoincrement())
+  venta_id           Int
+  lote_id            Int?
+  cantidad           Int
+  precio_unitario    Decimal @db.Decimal(10, 2)
+  descuento          Decimal @default(0) @db.Decimal(10, 2)
+  tarifa_impuesto_id Int
+  item_id            Int?
+
+  venta          Venta          @relation(fields: [venta_id], references: [venta_id])
+  lote           ItemLote?      @relation(fields: [lote_id], references: [lote_id])
+  tarifaImpuesto TarifaImpuesto @relation(fields: [tarifa_impuesto_id], references: [tarifa_impuesto_id])
+  item           Item?          @relation(fields: [item_id], references: [item_id])
+
+  @@map("detalle_venta")
+}
+
+model FacturaNumeracion {
+  numeracion_id    BigInt   @id @default(autoincrement())
+  sucursal_id      Int
+  numero           Int
+  estado_id        Int      @db.SmallInt
+  fecha_generacion DateTime @default(now())
+
+  sucursal Sucursal         @relation(fields: [sucursal_id], references: [sucursales_id])
+  estado   EstadoNumeracion @relation(fields: [estado_id], references: [estado_id])
+
+  @@unique([sucursal_id, numero])
+  @@map("facturas_numeracion")
+}
+
+model Factura {
+  factura_id         Int       @id @default(autoincrement())
+  venta_id           Int       @unique
+  clave_acceso       String    @unique @db.VarChar(49)
+  estado_sri_id      Int?
+  mensaje_sri        String?
+  fecha_envio_sri    DateTime?
+  fecha_autorizacion DateTime?
+  id_xml             String?
+  ambiente           Int?      @default(2) @db.SmallInt
+  usuario_emisor_id  Int
+  fecha_creacion     DateTime  @default(now())
+
+  venta         Venta      @relation(fields: [venta_id], references: [venta_id])
+  estadoSri     EstadoSri? @relation(fields: [estado_sri_id], references: [estado_sri_id])
+  usuarioEmisor Usuario    @relation(fields: [usuario_emisor_id], references: [usuarios_id])
+
+  @@map("facturas")
+}
+
+model Proveedor {
+  proveedor_id        Int       @id @default(autoincrement())
+  empresa_id          Int
+  identificacion      String    @db.VarChar(20)
+  tipo_identificacion String    @db.Char(2)
+  razon_social        String    @db.VarChar(150)
+  nombre_comercial    String?   @db.VarChar(150)
+  pais_id             Int
+  direccion           String?   @db.VarChar(255)
+  telefono            String?   @db.VarChar(20)
+  email               String?   @db.VarChar(100)
+  deleted_at          DateTime?
+  proveedor_creadoEn  DateTime  @default(now())
+
+  empresa            Empresa               @relation(fields: [empresa_id], references: [empresas_id])
+  tipoIdentificacion TipoIdentificacionSri @relation(fields: [tipo_identificacion], references: [codigo])
+  pais               Pais                  @relation(fields: [pais_id], references: [pais_id])
+  compras            Compra[]
+
+  @@unique([empresa_id, identificacion])
+  @@map("proveedores")
+}
+
+model Compra {
+  compra_id           Int      @id @default(autoincrement())
+  empresa_id          Int
+  proveedor_id        Int
+  sucursal_id         Int
+  usuario_id          Int
+  tipo_doc_id         Int // ← Factura, Proforma, Comprobante...
+  estado_pago_id      Int // ← Pendiente, Parcial, Pagado
+  numero_documento    String   @db.VarChar(30) // 001-001-000000123
+  fecha_emision       DateTime @db.Date
+  subtotal            Decimal  @db.Decimal(10, 2)
+  descuento_global    Decimal  @default(0) @db.Decimal(10, 2)
+  porcentaje_impuesto Decimal  @default(0) @db.Decimal(5, 2)
+  valor_impuesto      Decimal  @default(0) @db.Decimal(10, 2)
+  gastos_envio        Decimal  @default(0) @db.Decimal(10, 2)
+  total_pagar         Decimal  @db.Decimal(10, 2)
+  total_pagado        Decimal  @default(0) @db.Decimal(10, 2) // ← para pago parcial
+  observaciones       String?
+  compra_creadoEn     DateTime @default(now())
+
+  empresa    Empresa             @relation(fields: [empresa_id], references: [empresas_id])
+  proveedor  Proveedor           @relation(fields: [proveedor_id], references: [proveedor_id])
+  sucursal   Sucursal            @relation(fields: [sucursal_id], references: [sucursales_id])
+  usuario    Usuario             @relation(fields: [usuario_id], references: [usuarios_id])
+  tipoDoc    TipoDocumentoCompra @relation(fields: [tipo_doc_id], references: [tipo_doc_id])
+  estadoPago EstadoPagoCompra    @relation(fields: [estado_pago_id], references: [estado_pago_id])
+  detalles   DetalleCompra[]
+  pagos      PagoCompra[] // ← historial de pagos
+
+  @@unique([empresa_id, numero_documento, proveedor_id])
+  @@map("compras")
+}
+
+model DetalleCompra {
+  detalle_id            Int      @id @default(autoincrement())
+  compra_id             Int
+  item_id               Int
+  lote_id               Int? // null hasta que se procese el ingreso
+  cantidad              Int
+  costo_unitario        Decimal  @db.Decimal(10, 2)
+  descuento_linea       Decimal  @default(0) @db.Decimal(10, 2)
+  subtotal_linea        Decimal  @db.Decimal(10, 2)
+  precio_venta_sugerido Decimal? @db.Decimal(10, 2) // PVP sugerido — el usuario decide si aplica
+
+  compra Compra    @relation(fields: [compra_id], references: [compra_id])
+  item   Item      @relation(fields: [item_id], references: [item_id])
+  lote   ItemLote? @relation(fields: [lote_id], references: [lote_id])
+
+  @@map("detalle_compras")
+}
+
+// Historial de pagos parciales/totales
+model PagoCompra {
+  pago_id       Int      @id @default(autoincrement())
+  compra_id     Int
+  monto         Decimal  @db.Decimal(10, 2)
+  fecha_pago    DateTime @db.Date
+  referencia    String?  @db.VarChar(100) // número de transferencia, cheque, etc.
+  observaciones String?
+  pago_creadoEn DateTime @default(now())
+
+  compra Compra @relation(fields: [compra_id], references: [compra_id])
+
+  @@map("pagos_compra")
+}

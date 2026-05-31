@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TeamCellMania API</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 48px 24px;
+    }
+
+    /* ── Header ── */
+    .header {
+      text-align: center;
+      margin-bottom: 48px;
+    }
+
+    .logo {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      color: #64748b;
+      margin-bottom: 16px;
+    }
+
+    .title {
+      font-size: 42px;
+      font-weight: 700;
+      background: linear-gradient(135deg, #6366f1 0%, #a855f7 50%, #ec4899 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      line-height: 1.1;
+      margin-bottom: 12px;
+    }
+
+    .subtitle {
+      font-size: 16px;
+      color: #64748b;
+      max-width: 480px;
+      line-height: 1.6;
+    }
+
+    /* ── Status badge ── */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      background: #1e2130;
+      border: 1px solid #2d3148;
+      border-radius: 12px;
+      padding: 16px 28px;
+      margin-bottom: 48px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .status-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #22c55e;
+      box-shadow: 0 0 8px #22c55e;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .badge {
+      background: #1a1f35;
+      border: 1px solid #2d3148;
+      border-radius: 6px;
+      padding: 3px 10px;
+      font-size: 12px;
+      font-weight: 600;
+      color: #a5b4fc;
+    }
+
+    .divider {
+      width: 1px;
+      height: 20px;
+      background: #2d3148;
+    }
+
+    /* ── Grid ── */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 16px;
+      width: 100%;
+      max-width: 960px;
+      margin-bottom: 48px;
+    }
+
+    .card {
+      background: #1e2130;
+      border: 1px solid #2d3148;
+      border-radius: 12px;
+      padding: 24px;
+      transition: border-color 0.2s, transform 0.2s;
+    }
+
+    .card:hover {
+      border-color: #6366f1;
+      transform: translateY(-2px);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .card-icon {
+      font-size: 20px;
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #13162a;
+      border-radius: 8px;
+    }
+
+    .card-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: #e2e8f0;
+    }
+
+    .card-scope {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 4px;
+      margin-left: auto;
+    }
+
+    .scope-global {
+      background: #1a2744;
+      color: #60a5fa;
+      border: 1px solid #1e3a6e;
+    }
+
+    .scope-tenant {
+      background: #1a2b1a;
+      color: #4ade80;
+      border: 1px solid #1e4a1e;
+    }
+
+    .scope-admin {
+      background: #2a1a2a;
+      color: #c084fc;
+      border: 1px solid #4a1e6e;
+    }
+
+    .card-desc {
+      font-size: 13px;
+      color: #64748b;
+      line-height: 1.5;
+    }
+
+    .endpoints-list {
+      margin-top: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .endpoint-tag {
+      font-size: 11px;
+      font-family: 'Consolas', 'Fira Code', monospace;
+      background: #13162a;
+      border: 1px solid #2d3148;
+      border-radius: 4px;
+      padding: 2px 8px;
+      color: #94a3b8;
+    }
+
+    /* ── Swagger CTA ── */
+    .cta {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: center;
+      margin-bottom: 48px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      text-decoration: none;
+      transition: opacity 0.2s, transform 0.2s;
+      cursor: pointer;
+    }
+
+    .btn:hover {
+      opacity: 0.85;
+      transform: translateY(-1px);
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #6366f1, #a855f7);
+      color: white;
+    }
+
+    .btn-secondary {
+      background: #1e2130;
+      border: 1px solid #2d3148;
+      color: #e2e8f0;
+    }
+
+    /* ── Footer ── */
+    footer {
+      font-size: 12px;
+      color: #334155;
+      text-align: center;
+      line-height: 1.8;
+    }
+
+    footer span { color: #475569; }
+
+    /* ── Auth notice ── */
+    .auth-notice {
+      background: #1a1f35;
+      border: 1px solid #2d3a6e;
+      border-radius: 8px;
+      padding: 12px 20px;
+      font-size: 13px;
+      color: #7c9fd4;
+      max-width: 960px;
+      width: 100%;
+      margin-bottom: 32px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <div class="logo">TeamCellMania</div>
+    <div class="title">API v2.0</div>
+    <p class="subtitle">
+      Backend multi-tenant para gestión de inventario y
+      facturación electrónica · SRI Ecuador
+    </p>
+  </div>
+
+  <!-- Status -->
+  <div class="status-bar">
+    <div class="status-item">
+      <div class="dot"></div>
+      <span>Servicio activo</span>
+    </div>
+    <div class="divider"></div>
+    <div class="status-item">
+      <span>Versión</span>
+      <span class="badge">2.0.0</span>
+    </div>
+    <div class="divider"></div>
+    <div class="status-item">
+      <span>Runtime</span>
+      <span class="badge">NestJS + PostgreSQL</span>
+    </div>
+    <div class="divider"></div>
+    <div class="status-item">
+      <span>Arquitectura</span>
+      <span class="badge">Multi-tenant</span>
+    </div>
+  </div>
+
+  <!-- Auth notice -->
+  <div class="auth-notice">
+    🔐 La mayoría de endpoints requieren autenticación Bearer JWT.
+    Obtén tu token en <code>POST /auth/login</code> e inclúyelo en el header
+    <code>Authorization: Bearer &lt;token&gt;</code>
+  </div>
+
+  <!-- Módulos -->
+  <div class="grid">
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon">🔐</div>
+        <span class="card-title">Auth</span>
+        <span class="card-scope scope-global">Público</span>
+      </div>
+      <p class="card-desc">Login, refresh token y gestión de sesión.</p>
+      <div class="endpoints-list">
+        <span class="endpoint-tag">POST /auth/login</span>
+        <span class="endpoint-tag">POST /auth/refresh</span>
+        <span class="endpoint-tag">POST /auth/logout</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon">🏢</div>
+        <span class="card-title">Empresas</span>
+        <span class="card-scope scope-admin">SUPERADMIN</span>
+      </div>
+      <p class="card-desc">Gestión de empresas y suscripciones del sistema.</p>
+      <div class="endpoints-list">
+        <span class="endpoint-tag">GET /empresas</span>
+        <span class="endpoint-tag">POST /empresas</span>
+        <span class="endpoint-tag">PUT /empresas/:id</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon">👤</div>
+        <span class="card-title">Usuarios</span>
+        <span class="card-scope scope-tenant">Tenant</span>
+      </div>
+      <p class="card-desc">Usuarios y roles por empresa.</p>
+      <div class="endpoints-list">
+        <span class="endpoint-tag">GET /usuarios</span>
+        <span class="endpoint-tag">POST /usuarios</span>
+        <span class="endpoint-tag">PUT /usuarios/:id</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon">🏪</div>
+        <span class="card-title">Sucursales</span>
+        <span class="card-scope scope-tenant">Tenant</span>
+      </div>
+      <p class="card-desc">Puntos de emisión y sucursales por empresa.</p>
+      <div class="endpoints-list">
+        <span class="endpoint-tag">GET /sucursales</span>
+        <span class="endpoint-tag">POST /sucursales</span>
+        <span class="endpoint-tag">PUT /sucursales/:id</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon">👥</div>
+        <span class="card-title">Clientes</span>
+        <span class="card-scope scope-tenant">Tenant</span>
+      </div>
+      <p class="card-desc">Clientes con campos adicionales personalizados por factura.</p>
+      <div class="endpoints-list">
+        <span class="endpoint-tag">GET /clientes</span>
+        <span class="endpoint-tag">POST /clientes</span>
+        <span class="endpoint-tag">PUT /clientes/:id</span>
+        <span class="endpoint-tag">GET /clientes/:id/campos</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon">📦</div>
+        <span class="card-title">Items</span>
+        <span class="card-scope scope-tenant">Tenant</span>
+      </div>
+      <p class="card-desc">Productos y servicios con control de lotes de inventario.</p>
+      <div class="endpoints-list">
+        <span class="endpoint-tag">GET /items</span>
+        <span class="endpoint-tag">POST /items</span>
+        <span class="endpoint-tag">GET /items/:id/lotes</span>
+        <span class="endpoint-tag">POST /items/:id/lotes</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon">📱</div>
+        <span class="card-title">Marcas y Modelos</span>
+        <span class="card-scope scope-global">Global</span>
+      </div>
+      <p class="card-desc">Catálogo de dispositivos sincronizado diariamente con GSM Arena.</p>
+      <div class="endpoints-list">
+        <span class="endpoint-tag">GET /brands</span>
+        <span class="endpoint-tag">GET /models</span>
+        <span class="endpoint-tag">GET /models/search</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon">🧾</div>
+        <span class="card-title">Ventas</span>
+        <span class="card-scope scope-tenant">Tenant</span>
+      </div>
+      <p class="card-desc">Registro de ventas con detalle por lote y campos adicionales.</p>
+      <div class="endpoints-list">
+        <span class="endpoint-tag">GET /ventas</span>
+        <span class="endpoint-tag">POST /ventas</span>
+        <span class="endpoint-tag">GET /ventas/:id</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon">⚡</div>
+        <span class="card-title">Facturas</span>
+        <span class="card-scope scope-tenant">Tenant</span>
+      </div>
+      <p class="card-desc">Facturación electrónica SRI: XML, firma digital y envío SOAP.</p>
+      <div class="endpoints-list">
+        <span class="endpoint-tag">POST /facturas</span>
+        <span class="endpoint-tag">GET /facturas/:id</span>
+        <span class="endpoint-tag">POST /facturas/:id/enviar</span>
+        <span class="endpoint-tag">GET /facturas/:id/pdf</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon">🗂️</div>
+        <span class="card-title">Catálogos</span>
+        <span class="card-scope scope-global">Global</span>
+      </div>
+      <p class="card-desc">Tablas estáticas del SRI Ecuador. Solo lectura.</p>
+      <div class="endpoints-list">
+        <span class="endpoint-tag">GET /catalogos/formas-pago</span>
+        <span class="endpoint-tag">GET /catalogos/tarifas</span>
+        <span class="endpoint-tag">GET /catalogos/comprobantes</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon">✍️</div>
+        <span class="card-title">Firmas</span>
+        <span class="card-scope scope-tenant">Tenant</span>
+      </div>
+      <p class="card-desc">Certificados digitales p12 para firma electrónica.</p>
+      <div class="endpoints-list">
+        <span class="endpoint-tag">GET /firmas</span>
+        <span class="endpoint-tag">POST /firmas/upload</span>
+        <span class="endpoint-tag">PUT /firmas/:id/activar</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header">
+        <div class="card-icon">📋</div>
+        <span class="card-title">Suscripciones</span>
+        <span class="card-scope scope-admin">SUPERADMIN</span>
+      </div>
+      <p class="card-desc">Planes, suscripciones y control de vencimientos.</p>
+      <div class="endpoints-list">
+        <span class="endpoint-tag">GET /planes</span>
+        <span class="endpoint-tag">GET /suscripciones</span>
+        <span class="endpoint-tag">POST /suscripciones</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- CTAs -->
+  <div class="cta">
+    <a href="/api/docs" class="btn btn-primary">
+      📚 Abrir Swagger UI
+    </a>
+    <a href="/api/docs-json" class="btn btn-secondary">
+      { } Descargar OpenAPI JSON
+    </a>
+  </div>
+
+  <!-- Footer -->
+  <footer>
+    <div>TeamCellMania API · <span>v2.0.0</span> · NestJS + PostgreSQL + Prisma</div>
+    <div>Facturación Electrónica SRI Ecuador · Arquitectura Multi-tenant</div>
+  </footer>
+
+</body>
+</html>
