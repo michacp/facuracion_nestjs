@@ -1,0 +1,47 @@
+name: Deploy NestJS to EC2
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install & Build
+        run: |
+          npm ci --omit=dev
+          npm run build
+
+      - name: Deploy to EC2
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: ${{ secrets.EC2_PORT }}
+          script: |
+            echo "🚀 Desplegando VFFAC NestJS..."
+
+            cd /home/ubuntu/proyects/vffac/backend-nestjs
+            
+            git pull origin main
+            
+            npm ci --omit=dev
+            npm run build
+
+            # Reiniciar PM2
+            pm2 restart vffac-nestjs --update-env || \
+            pm2 start npm --name "vffac-nestjs" -- start:prod -f
+
+            echo "✅ Despliegue finalizado!"
