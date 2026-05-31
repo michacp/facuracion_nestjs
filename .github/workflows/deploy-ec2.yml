@@ -12,18 +12,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'npm'
-
-      - name: Install & Build
-        run: |
-          npm ci
-          npm run build
-
-      - name: Deploy to EC2
+      - name: Actualizar código en EC2 via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.EC2_HOST }}
@@ -31,20 +20,13 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           port: ${{ secrets.EC2_PORT }}
           script: |
-            echo "🚀 Desplegando VFFAC NestJS..."
-
             cd /home/ubuntu/proyects/vffac/backend-nestjs
             
-            git pull origin main
+            echo "→ Trayendo los últimos cambios de Git..."
+            git fetch --all
+            git reset --hard origin/main
             
-            # Instalar TODO (incluyendo @nestjs/cli para el build)
-            npm ci
+            echo "→ Contenido actual de la carpeta:"
+            ls -la
             
-            # Hacer build
-            npm run build
-
-            # Reiniciar PM2
-            pm2 restart vffac-nestjs --update-env || \
-            pm2 start npm --name "vffac-nestjs" -- start:prod -f
-
-            echo "✅ Despliegue completado!"
+            echo "✅ Código actualizado. Listo para tus pruebas."
