@@ -20,7 +20,7 @@ jobs:
 
       - name: Install & Build
         run: |
-          npm ci --omit=dev
+          npm ci
           npm run build
 
       - name: Deploy to EC2
@@ -37,11 +37,14 @@ jobs:
             
             git pull origin main
             
-            npm ci --omit=dev
+            # Instalar TODO (incluyendo @nestjs/cli para el build)
+            npm ci
+            
+            # Hacer build
             npm run build
 
             # Reiniciar PM2
             pm2 restart vffac-nestjs --update-env || \
             pm2 start npm --name "vffac-nestjs" -- start:prod -f
 
-            echo "✅ Despliegue finalizado!"
+            echo "✅ Despliegue completado!"
