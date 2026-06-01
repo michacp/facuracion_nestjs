@@ -382,7 +382,7 @@ model Item {
   item_codigo_auxiliar     String?   @db.VarChar(25)
   tipo_item_id             Int
   tarifa_impuesto_id       Int
-  item_nombre              String    @db.VarChar(100)
+  item_nombre              String    @db.VarChar(255)
   item_descripcion         String?
   item_precio_unitario     Decimal   @db.Decimal(12, 2)
   item_activo              Boolean   @default(true)
