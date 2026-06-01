@@ -12,7 +12,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Actualizar código en EC2 via SSH
+      - name: Actualizar código y Desplegar en EC2 via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.EC2_HOST }}
@@ -20,13 +20,37 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           port: ${{ secrets.EC2_PORT }}
           script: |
+            # 1. Navegar al proyecto
             cd /home/ubuntu/proyects/vffac/backend-nestjs
             
-            echo "→ Trayendo los últimos cambios de Git..."
+            # 2. Actualizar repositorio
+            echo "📥 Trayendo los últimos cambios de Git..."
             git fetch --all
             git reset --hard origin/main
             
-            echo "→ Contenido actual de la carpeta:"
-            ls -la
+            # 3. Cargar variables de entorno de la sesión (NVM/Node)
+            # Esto evita el típico error de "npm: command not found" en GitHub Actions
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
             
-            echo "✅ Código actualizado. Listo para tus pruebas."
+            # 4. Instalar dependencias de producción y desarrollo (necesarias para compilar)
+            echo "📦 Instalando dependencias..."
+            npm install
+            
+            # 5. Sincronizar Prisma (Generar el cliente dinámico antes del build)
+            echo "🔄 Generando cliente de Prisma..."
+            npx prisma generate
+            
+            # 6. Construir el proyecto con la configuración limpia y SWC
+            echo "🏗️ Compilando el proyecto con SWC..."
+            npx nest build --path tsconfig.build.json --builder swc
+            
+            # 7. Despliegue automatizado en PM2
+            echo "🚀 Reiniciando aplicación en PM2..."
+            # --update-env asegura que si cambiaste algo en tu archivo .env, PM2 lo recargue
+            pm2 start dist/main.js --name "vffac-nestjs" --node-args="--max-old-space-size=250" --update-env || pm2 restart vffac-nestjs --update-env
+            
+            # 8. Guardar estado para que sobreviva a reinicios del servidor físico
+            pm2 save
+            
+            echo "✅ ¡Despliegue completado con éxito y sin crashes!"
