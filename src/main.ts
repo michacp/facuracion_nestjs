@@ -61,7 +61,7 @@ async function bootstrap() {
   // 🔧 CORS
   // ─────────────────────────────────────────
   const allowedOrigins = [
-    'http://localhost:63761',
+    'http://localhost:60949',
     'http://localhost:4202',
     'http://localhost:4000',
     'http://localhost:55099',
