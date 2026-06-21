@@ -53,7 +53,7 @@ export class VentasController {
     @Body() body: any,
     @CurrentUser() user: JwtPayload,
   ): Promise<ListSalesResponseDto> {
-    console.log(body)
+
     return this.ventasService.listSales(body, user);
   }
 }

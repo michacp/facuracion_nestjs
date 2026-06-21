@@ -15,6 +15,11 @@ import { DeleteClientBodyDto } from './dto/request/delete-client-body.dto';
 import { DeleteClientDoc } from './docs/delete-client.doc';
 import { EditClientBodyDto } from './dto/request/edit-client-body.dto';
 import { EditClientDoc } from './docs/edit-client.doc';
+import { ListClientesBodyDto } from './dto/request/list-clientes-body.dto';
+import { ListClientesResponseDto } from './dto/response/list-clientes-response.dto';
+import { GetClienteDoc } from './docs/get-cliente.doc';
+import { GetClienteBodyDto } from './dto/request/get-cliente-body.dto';
+import { GetClienteResponseDto } from './dto/response/get-cliente-response.dto';
 
 @ApiTags('Clientes')
 @Controller('clientes')
@@ -68,5 +73,23 @@ export class ClientesController {
     @CurrentUser() user: JwtPayload,
   ): Promise<FindClientResponseDto[]> {
     return this.clientsService.find(body, user);
+  }
+
+  @Post('list')
+  @Auth()
+  async list(
+    @Body() body: ListClientesBodyDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<ListClientesResponseDto> {
+    return this.clientsService.listClientes(body, user);
+  }
+  @Post('get')
+  @Auth()
+  @GetClienteDoc()
+  async get(
+    @Body() body: GetClienteBodyDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<GetClienteResponseDto> {
+    return this.clientsService.getCliente(body, user);
   }
 }

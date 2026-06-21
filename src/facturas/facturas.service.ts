@@ -19,6 +19,8 @@ import { GoogleDriveService } from '../google-drive/google-drive.service';
 import { Prisma } from '@prisma/client';
 import { CatalogosService } from '../catalogos/catalogos.service';
 import { toGuayaquilStartOfDay, toGuayaquilEndOfDay } from './helpers/guayaquil-date.helper';
+import { RetryFacturaResponseDto } from './dto/response/retry-factura-response.dto';
+import { RetryFacturaBodyDto } from './dto/request/retry-factura-body.dto';
 
 @Injectable()
 export class FacturasService {
@@ -265,14 +267,66 @@ export class FacturasService {
             // ── 11. Firmar XML ───────────────────────────────────────────────────
             const xmlFirmado = await this.signerHelper.firmarXML(empresaId, xmlString);
 
-            // ── 12. Marcar OCUPADO antes de enviar — si el proceso muere aquí
-            //        el número no se reutiliza (SRI podría haberlo recibido)
+            // ── NUEVO: Guardar XML firmado en Drive ANTES de enviar al SRI ────
+            // Si el SRI falla, ya tenemos el XML con la fecha correcta
+            const xmlBuffer = Buffer.from(xmlFirmado, 'utf-8');
+            const carpetaPending = `${empresaId}/facturas/pendiente_envio`;
+
+            let driveFileIdPrevio: string | null = null;
+            try {
+                const uploaded = await this.driveService.uploadFile(
+                    xmlBuffer,
+                    `${claveAcceso}.xml`,
+                    'text/xml',
+                    carpetaPending,
+                );
+                driveFileIdPrevio = uploaded.id ?? null;
+            } catch (driveErr) {
+                // Drive falló — continuamos igual, el XML no se guardó
+                this.logger.warn(`⚠️ No se pudo guardar XML previo en Drive: ${driveErr}`);
+            }
+
+            // ── NUEVO: Guardar factura en BD con PENDIENTE antes de enviar ────
+            await this.guardarFactura({
+                ventaId,
+                claveAcceso,
+                estadoCodigo: 'PENDIENTE',
+                mensajeSRI: 'Enviando al SRI...',
+                fechaEnvio: new Date(),
+                fechaAutorizacion: null,
+                xmlDriveId: driveFileIdPrevio, // ← XML con fecha original
+                usuarioEmisorId: user.sub,
+                ambiente: Number(ambiente),
+            });
+
+            // Marcar número OCUPADO (número llegará al SRI en instantes)
             await this.numberHelper.marcarNumeroOcupado(sucursal.sucursales_id, numero);
 
-            // ── 13. Enviar al SRI ────────────────────────────────────────────────
-            const respuestaEnvio = await this.sriService.enviarComprobante(xmlFirmado);
+            // ── Enviar al SRI ────────────────────────────────────────────────
             const fechaEnvio = new Date();
+            let respuestaEnvio: string;
 
+            try {
+                respuestaEnvio = await this.sriService.enviarComprobante(xmlFirmado);
+            } catch (sriErr) {
+                // SRI completamente caído (timeout, connection refused, etc.)
+                this.logger.error(`❌ SRI no disponible: ${sriErr}`);
+
+                // Actualizar estado a PENDIENTE con mensaje descriptivo
+                await this.actualizarEstadoFactura(ventaId, 'PENDIENTE',
+                    'SRI no disponible al momento del envío. Pendiente de reenvío.',
+                    fechaEnvio, driveFileIdPrevio,
+                );
+
+                return {
+                    claveAcceso,
+                    estado: 'PENDIENTE',
+                    mensajeSRI: 'SRI no disponible. La factura quedó pendiente de envío. Puede reintentarse desde el módulo de facturas.',
+                    fechaAutorizacion: null,
+                };
+            }
+
+            // ── Procesar respuesta del SRI ───────────────────────────────────
             const parsedEnvio = await parseStringPromise(respuestaEnvio, { explicitArray: false });
             const estadoEnvio =
                 parsedEnvio['soap:Envelope']?.['soap:Body']?.[
@@ -282,7 +336,6 @@ export class FacturasService {
             let resultado: GenerateInvoiceResponseDto;
 
             if (estadoEnvio === 'RECIBIDA') {
-                // ── RECIBIDA → consultar autorización ───────────────────────────
                 const consultaXml = await this.sriService.consultarEstado(claveAcceso);
 
                 const { estado, mensajeCompleto, fechaAutorizacion, driveFileId } =
@@ -290,35 +343,32 @@ export class FacturasService {
                         consultaXml, empresaId, claveAcceso,
                     );
 
-                await this.guardarFactura({
-                    ventaId, claveAcceso, estadoCodigo: estado,
-                    mensajeSRI: mensajeCompleto, fechaEnvio,
-                    fechaAutorizacion: fechaAutorizacion ? new Date(fechaAutorizacion) : null,
-                    xmlDriveId: driveFileId, usuarioEmisorId: user.sub, ambiente: Number(ambiente),
-                });
+                // Actualizar con resultado final — reemplaza el PENDIENTE inicial
+                await this.actualizarEstadoFactura(
+                    ventaId, estado, mensajeCompleto,
+                    fechaEnvio, driveFileId,
+                    fechaAutorizacion ? new Date(fechaAutorizacion) : null,
+                );
 
-                // AUTORIZADO o NO AUTORIZADO → USADO (número consumido en SRI)
                 await this.numberHelper.marcarNumeroUsado(sucursal.sucursales_id, numero);
+
+                // Limpiar XML de pendiente_envio si se autorizó
+                if (driveFileIdPrevio && estado === 'AUTORIZADO') {
+                    this.driveService.deleteFile(driveFileIdPrevio).catch(() => { });
+                }
 
                 resultado = { claveAcceso, estado, mensajeSRI: mensajeCompleto, fechaAutorizacion };
 
             } else {
-                // ── DEVUELTA ─────────────────────────────────────────────────────
                 const { estado, mensajeCompleto, driveFileId } =
                     await this.sriService.procesarRespuestaDevuelta(
                         respuestaEnvio, xmlFirmado, empresaId, claveAcceso,
                     );
 
-                await this.guardarFactura({
-                    ventaId, claveAcceso, estadoCodigo: estado,
-                    mensajeSRI: mensajeCompleto, fechaEnvio,
-                    fechaAutorizacion: null, xmlDriveId: driveFileId,
-                    usuarioEmisorId: user.sub, ambiente: Number(ambiente),
-                });
+                await this.actualizarEstadoFactura(
+                    ventaId, estado, mensajeCompleto, fechaEnvio, driveFileId,
+                );
 
-                // ← SIEMPRE marcar USADO en DEVUELTA
-                // "ERROR SECUENCIAL REGISTRADO" = SRI ya tiene ese número → no reutilizar
-                // Otros errores DEVUELTA = XML inválido → el número sí llegó al SRI
                 await this.numberHelper.marcarNumeroUsado(sucursal.sucursales_id, numero);
 
                 resultado = { claveAcceso, estado, mensajeSRI: mensajeCompleto, fechaAutorizacion: null };
@@ -329,8 +379,6 @@ export class FacturasService {
         } catch (error) {
             this.logger.error('❌ Error generando factura:', error);
 
-            // Solo liberar si el número está RESERVADO (nunca llegó al SRI)
-            // Si está OCUPADO = ya se envió, no liberar
             if (numero !== null) {
                 try {
                     const sucursal = await this.prisma.sucursal.findFirst({
@@ -338,7 +386,6 @@ export class FacturasService {
                         select: { sucursales_id: true },
                     });
                     if (sucursal) {
-                        // liberarNumeroFactura solo actualiza si estado = RESERVADO
                         await this.numberHelper.liberarNumeroFactura(sucursal.sucursales_id, numero);
                     }
                 } catch (libErr) {
@@ -349,11 +396,52 @@ export class FacturasService {
             return {
                 claveAcceso: '',
                 estado: 'ERROR',
-                mensajeSRI: 'No se envió la factura al SRI.',
+                mensajeSRI: 'Error interno al generar la factura.',
                 fechaAutorizacion: null,
             };
         }
     }
+
+    // ── Helper: actualizar estado sin crear duplicado ────────────────────
+    private async actualizarEstadoFactura(
+        ventaId: number,
+        estadoCodigo: string,
+        mensajeSRI: string,
+        fechaEnvio: Date,
+        xmlDriveId: string | null,
+        fechaAutorizacion: Date | null = null,
+    ): Promise<void> {
+        const estadoSri = await this.prisma.estadoSri.findFirst({
+            where: { codigo: estadoCodigo },
+            select: { estado_sri_id: true },
+        });
+
+        await this.prisma.factura.upsert({
+            where: { venta_id: ventaId },
+            create: {
+                venta_id: ventaId,
+                clave_acceso: '', // se actualiza abajo
+                estado_sri_id: estadoSri?.estado_sri_id ?? null,
+                mensaje_sri: mensajeSRI,
+                fecha_envio_sri: fechaEnvio,
+                fecha_autorizacion: fechaAutorizacion,
+                id_xml: xmlDriveId,
+                ambiente: Number(this.config.get('INVOICE_SRI_ENVIRONMENT_TYPE')),
+                usuario_emisor_id: 0,
+            },
+            update: {
+                estado_sri_id: estadoSri?.estado_sri_id ?? null,
+                mensaje_sri: mensajeSRI,
+                fecha_envio_sri: fechaEnvio,
+                fecha_autorizacion: fechaAutorizacion,
+                ...(xmlDriveId && { id_xml: xmlDriveId }),
+            },
+        });
+    }
+
+
+
+
 
     // ── Guardar/actualizar factura en BD ─────────────────────────────────
     private async guardarFactura(data: {
@@ -607,5 +695,443 @@ export class FacturasService {
             fechaAutorizacion: fechaAutorizacion || null,
             xmlActualizado,
         };
+    }
+
+
+    async retryFactura(
+        dto: RetryFacturaBodyDto,
+        user: JwtPayload,
+    ): Promise<RetryFacturaResponseDto> {
+        const empresaId = user.empresaId!;
+        const ambiente = this.config.getOrThrow<string>('INVOICE_SRI_ENVIRONMENT_TYPE');
+
+        // ── 1. Obtener factura — solo PENDIENTE o DEVUELTA ───────────────────
+        const factura = await this.prisma.factura.findFirst({
+            where: {
+                factura_id: dto.factura_id,
+                venta: { empresa_id: empresaId },
+                estadoSri: { codigo: { in: ['PENDIENTE', 'DEVUELTA'] } },
+            },
+            select: {
+                factura_id: true,
+                clave_acceso: true,
+                id_xml: true,
+                ambiente: true,
+                venta_id: true,
+                usuario_emisor_id: true,
+            },
+        });
+
+        if (!factura) {
+            throw new BadRequestException(
+                'Factura no encontrada o no está en estado reintentable',
+            );
+        }
+
+        // ── 2. Verificar si es el mismo día ──────────────────────────────────
+        // La fecha está en la clave de acceso posiciones 0-7: ddmmaaaa
+        const fechaEnClave = factura.clave_acceso.substring(0, 8); // ej: "27052026"
+        const hoy = this.getFechaFormateada();            // ej: "28052026"
+        const esMismodia = fechaEnClave === hoy;
+
+        this.logger.log(
+            `🔄 Retry factura ${factura.factura_id} — ` +
+            `fecha original: ${fechaEnClave}, hoy: ${hoy}, ` +
+            `${esMismodia ? 'mismo día → XML original' : 'día diferente → RECREAR'}`,
+        );
+
+        const fechaEnvio = new Date();
+
+        if (esMismodia) {
+            // ── CASO A: Mismo día → enviar XML original ──────────────────────
+            return this.enviarXmlOriginal(factura, empresaId, fechaEnvio);
+
+        } else {
+            // ── CASO B: Día diferente → recrear con fecha de hoy ────────────
+            return this.recrearYEnviarFactura(factura, user, empresaId, ambiente, fechaEnvio);
+        }
+    }
+
+    // ── CASO A: Enviar XML original (mismo día) ──────────────────────────
+    private async enviarXmlOriginal(
+        factura: any,
+        empresaId: number,
+        fechaEnvio: Date,
+    ): Promise<RetryFacturaResponseDto> {
+
+        if (!factura.id_xml) {
+            throw new BadRequestException(
+                'No hay XML guardado. El envío original falló antes de guardar el XML.',
+            );
+        }
+
+        let xmlFirmado: string;
+        try {
+            const buffer = await this.driveService.getFileBinary(factura.id_xml);
+            xmlFirmado = buffer.toString('utf-8');
+        } catch {
+            throw new BadRequestException('No se pudo leer el XML desde Drive.');
+        }
+
+        return this.enviarAlSri(
+            xmlFirmado, factura.clave_acceso, factura.venta_id,
+            empresaId, fechaEnvio, factura.id_xml, true,
+        );
+    }
+
+    // ── CASO B: Recrear factura con fecha de hoy ─────────────────────────
+    private async recrearYEnviarFactura(
+        factura: any,
+        user: JwtPayload,
+        empresaId: number,
+        ambiente: string,
+        fechaEnvio: Date,
+    ): Promise<RetryFacturaResponseDto> {
+
+        this.logger.log(
+            `📅 Recreando factura ${factura.factura_id} con fecha de hoy`,
+        );
+
+        // ── Cargar todos los datos necesarios para recrear ───────────────────
+        const venta = await this.prisma.venta.findUniqueOrThrow({
+            where: { venta_id: factura.venta_id },
+            select: {
+                venta_id: true,
+                numero_venta: true,
+                fecha_emision: true, // fecha original de la VENTA (no cambia)
+                subtotal: true,
+                descuento_total: true,
+                iva: true,
+                propina: true,
+                total: true,
+                observaciones: true,
+                plazo_pago: true,
+                tipo_comprobante_id: true,
+                forma_pago_id: true,
+                ventas_sucursales_id: true,
+                cliente: {
+                    select: {
+                        identificacion: true,
+                        tipo_identificacion: true,
+                        razon_social: true,
+                        direccion: true,
+                        email: true,
+                        telefono: true,
+                        camposAdicionales: { select: { clave: true, valor: true } },
+                    },
+                },
+                detalles: {
+                    select: {
+                        cantidad: true,
+                        precio_unitario: true,
+                        descuento: true,
+                        tarifa_impuesto_id: true,
+                        lote: {
+                            select: {
+                                item: {
+                                    select: {
+                                        item_codigo_principal: true,
+                                        item_codigo_auxiliar: true,
+                                        item_nombre: true,
+                                        tarifaImpuesto: {
+                                            select: {
+                                                tarifa_codigo_sri: true,
+                                                tarifa_porcentaje: true,
+                                                tipoImpuesto: {
+                                                    select: { tipo_impuesto_codigo_sri: true },
+                                                },
+                                            },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                        item: {
+                            select: {
+                                item_codigo_principal: true,
+                                item_codigo_auxiliar: true,
+                                item_nombre: true,
+                                tarifaImpuesto: {
+                                    select: {
+                                        tarifa_codigo_sri: true,
+                                        tarifa_porcentaje: true,
+                                        tipoImpuesto: {
+                                            select: { tipo_impuesto_codigo_sri: true },
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        // Datos empresa y sucursal
+        const usuarioEmpresa = await this.prisma.usuarioEmpresa.findFirstOrThrow({
+            where: {
+                usuario_empresa_usuarioId: user.sub,
+                usuario_empresa_empresaId: empresaId,
+            },
+            select: {
+                usuario_empresa_codEmi: true,
+                empresa: {
+                    select: {
+                        empresas_razonSocial: true,
+                        empresas_nombreComercial: true,
+                        empresas_ruc: true,
+                        empresas_dirMatriz: true,
+                        empresas_telefono: true,
+                        empresa_email: true,
+                        empresas_obligadocontabilidad: true,
+                        empresas_agenteRetencion: true,
+                        regimen: { select: { regimenes_nombre: true } },
+                    },
+                },
+            },
+        });
+
+        const sucursal = await this.prisma.sucursal.findFirstOrThrow({
+            where: { sucursales_id: venta.ventas_sucursales_id! },
+            select: {
+                sucursales_id: true,
+                sucursales_cod: true,
+                sucursales_direccion: true,
+            },
+        });
+
+        const tipoComprobante = await this.prisma.tipoComprobante.findUniqueOrThrow({
+            where: { tipo_comprobante_id: venta.tipo_comprobante_id },
+            select: { codigo: true },
+        });
+
+        const formaPago = await this.prisma.formaPago.findUniqueOrThrow({
+            where: { forma_pago_id: venta.forma_pago_id },
+            select: { codigo: true },
+        });
+
+        // ── Extraer número del secuencial de la clave anterior ───────────────
+        // La clave tiene: ddmmaaaa + tipoDoc(2) + ruc(13) + ambiente(1) +
+        //                 serie(6) + secuencial(9) + codigoNumerico(8) + tipoEmision(1)
+        const claveAnterior = factura.clave_acceso; // 49 dígitos
+        const secuencialViejo = claveAnterior.substring(24, 33); // posición 24-32, 9 dígitos
+        const numeroSecuencial = parseInt(secuencialViejo, 10);
+
+        // ── Nueva clave de acceso con fecha de HOY ───────────────────────────
+        const serie = `${sucursal.sucursales_cod}${usuarioEmpresa.usuario_empresa_codEmi}`;
+        const nuevaClaveAcceso = generarClaveAccesoFactura(
+            usuarioEmpresa.empresa.empresas_ruc,
+            ambiente,
+            serie,
+            numeroSecuencial, // mismo número de secuencial
+        );
+
+        this.logger.log(
+            `🔑 Nueva clave acceso (fecha hoy): ${nuevaClaveAcceso}\n` +
+            `🔑 Clave anterior (fecha original): ${claveAnterior}`,
+        );
+
+        // ── Construir detalles para el XML ────────────────────────────────────
+        const detallesXml = venta.detalles.map((d) => {
+            const itemData = d.lote?.item ?? d.item!;
+            const cantidad = Number(d.cantidad);
+            const precio = Number(d.precio_unitario);
+            const descuento = Number(d.descuento);
+            const base = cantidad * precio - descuento;
+            const porcentaje = Number(itemData.tarifaImpuesto?.tarifa_porcentaje ?? 0);
+            const valorIva = parseFloat((base * porcentaje / 100).toFixed(2));
+
+            return {
+                codigoPrincipal: itemData.item_codigo_principal,
+                codigoAuxiliar: itemData.item_codigo_auxiliar ?? undefined,
+                descripcion: itemData.item_nombre,
+                cantidad,
+                precioUnitario: precio,
+                descuento,
+                precioTotalSinImpuesto: base,
+                impuestos: [{
+                    codigo: itemData.tarifaImpuesto?.tipoImpuesto?.tipo_impuesto_codigo_sri ?? '2',
+                    codigoPorcentaje: itemData.tarifaImpuesto?.tarifa_codigo_sri ?? '0',
+                    baseImponible: base,
+                    tarifa: porcentaje,
+                    valor: valorIva,
+                }],
+            };
+        });
+
+        // ── Campos adicionales ───────────────────────────────────────────────
+        const camposAdicionales = [
+            { nombre: 'Observaciones', valor: venta.observaciones ?? '' },
+            { nombre: 'Email', valor: venta.cliente.email ?? '' },
+            { nombre: 'Teléfono', valor: venta.cliente.telefono ?? '' },
+            { nombre: 'Dirección', valor: venta.cliente.direccion ?? '' },
+            ...venta.cliente.camposAdicionales.map((c) => ({
+                nombre: c.clave, valor: c.valor,
+            })),
+        ].filter((c) => c.valor.trim() !== '');
+
+        // ── Generar nuevo XML con fecha HOY ───────────────────────────────────
+        const empresa = usuarioEmpresa.empresa;
+        const xmlString = generarXMLFactura({
+            ambiente,
+            tipoEmision: '1',
+            razonSocial: empresa.empresas_razonSocial,
+            nombreComercial: empresa.empresas_nombreComercial ?? '',
+            ruc: empresa.empresas_ruc,
+            claveAcceso: nuevaClaveAcceso,
+            codDoc: tipoComprobante.codigo,
+            estab: sucursal.sucursales_cod,
+            ptoEmi: usuarioEmpresa.usuario_empresa_codEmi,
+            secuencial: numeroSecuencial.toString().padStart(9, '0'),
+            dirMatriz: empresa.empresas_dirMatriz,
+            regimenMicroempresas: empresa.regimen?.regimenes_nombre ?? 'NO',
+            agenteRetencion: empresa.empresas_agenteRetencion,
+            // ← FECHA DE HOY — correcto para el SRI
+            fechaEmision: moment().format('DD/MM/YYYY'),
+            dirEstablecimiento: sucursal.sucursales_direccion,
+            obligadoContabilidad: empresa.empresas_obligadocontabilidad,
+            tipoIdentificacionComprador: venta.cliente.tipo_identificacion,
+            razonSocialComprador: venta.cliente.razon_social,
+            identificacionComprador: venta.cliente.identificacion,
+            totalSinImpuestos: Number(venta.subtotal),
+            totalDescuento: Number(venta.descuento_total),
+            propina: Number(venta.propina),
+            importeTotal: Number(venta.total),
+            moneda: 'DOLAR',
+            pagoFormaPago: formaPago.codigo,
+            pagoTotal: Number(venta.total),
+            unidadTiempo: '',
+            plazo: venta.plazo_pago ?? '',
+            detalles: detallesXml,
+            camposAdicionales,
+        });
+
+        // ── Firmar nuevo XML ──────────────────────────────────────────────────
+        const xmlFirmado = await this.signerHelper.firmarXML(empresaId, xmlString);
+
+        // ── Actualizar clave de acceso en BD ANTES de enviar ─────────────────
+        await this.prisma.factura.update({
+            where: { factura_id: factura.factura_id },
+            data: {
+                clave_acceso: nuevaClaveAcceso,
+                mensaje_sri: 'Factura recreada con fecha actual. Enviando al SRI...',
+            },
+        });
+
+        // ── Guardar nuevo XML en Drive ────────────────────────────────────────
+        let nuevoDriveId: string | null = null;
+        try {
+            const uploaded = await this.driveService.uploadFile(
+                Buffer.from(xmlFirmado, 'utf-8'),
+                `${nuevaClaveAcceso}.xml`,
+                'text/xml',
+                `${empresaId}/facturas/pendiente_envio`,
+            );
+            nuevoDriveId = uploaded.id ?? null;
+
+            // Eliminar XML anterior (fecha vieja) para no generar confusión
+            if (factura.id_xml) {
+                this.driveService.deleteFile(factura.id_xml).catch(() => { });
+            }
+        } catch (err) {
+            this.logger.warn(`⚠️ No se pudo guardar XML recreado en Drive: ${err}`);
+        }
+
+        // Actualizar id_xml con el nuevo
+        if (nuevoDriveId) {
+            await this.prisma.factura.update({
+                where: { factura_id: factura.factura_id },
+                data: { id_xml: nuevoDriveId },
+            });
+        }
+
+        // ── Enviar al SRI ─────────────────────────────────────────────────────
+        return this.enviarAlSri(
+            xmlFirmado, nuevaClaveAcceso, factura.venta_id,
+            empresaId, fechaEnvio, nuevoDriveId, false,
+        );
+    }
+
+    // ── Helper compartido: enviar XML al SRI y procesar respuesta ────────
+    private async enviarAlSri(
+        xmlFirmado: string,
+        claveAcceso: string,
+        ventaId: number,
+        empresaId: number,
+        fechaEnvio: Date,
+        xmlDriveId: string | null,
+        xmlOriginal: boolean,
+    ): Promise<RetryFacturaResponseDto> {
+
+        let respuestaEnvio: string;
+        try {
+            respuestaEnvio = await this.sriService.enviarComprobante(xmlFirmado);
+        } catch (sriErr) {
+            this.logger.error(`❌ SRI no disponible: ${sriErr}`);
+            throw new BadRequestException(
+                'El SRI no responde. Intente más tarde.',
+            );
+        }
+
+        const parsedEnvio = await parseStringPromise(respuestaEnvio, { explicitArray: false });
+        const estadoEnvio =
+            parsedEnvio['soap:Envelope']?.['soap:Body']?.[
+                'ns2:validarComprobanteResponse'
+            ]?.RespuestaRecepcionComprobante?.estado;
+
+        if (estadoEnvio === 'RECIBIDA') {
+            const consultaXml = await this.sriService.consultarEstado(claveAcceso);
+
+            const { estado, mensajeCompleto, fechaAutorizacion, driveFileId } =
+                await this.sriService.procesarRespuestaAutorizacion(
+                    consultaXml, empresaId, claveAcceso,
+                );
+
+            await this.actualizarEstadoFactura(
+                ventaId, estado, mensajeCompleto, fechaEnvio,
+                driveFileId ?? xmlDriveId,
+                fechaAutorizacion ? new Date(fechaAutorizacion) : null,
+            );
+
+            if (driveFileId && driveFileId !== xmlDriveId && xmlDriveId) {
+                this.driveService.deleteFile(xmlDriveId).catch(() => { });
+            }
+
+            return {
+                estado,
+                claveAcceso,
+                mensajeSRI: mensajeCompleto,
+                fechaAutorizacion: fechaAutorizacion,
+                xml_original_usado: xmlOriginal,
+            };
+
+        } else {
+            const { estado, mensajeCompleto, driveFileId } =
+                await this.sriService.procesarRespuestaDevuelta(
+                    respuestaEnvio, xmlFirmado, empresaId, claveAcceso,
+                );
+
+            await this.actualizarEstadoFactura(
+                ventaId, estado, mensajeCompleto,
+                fechaEnvio, driveFileId ?? xmlDriveId,
+            );
+
+            return {
+                estado,
+                claveAcceso,
+                mensajeSRI: mensajeCompleto,
+                fechaAutorizacion: null,
+                xml_original_usado: xmlOriginal,
+            };
+        }
+    }
+
+    // ── Helper: fecha hoy en formato ddmmaaaa ─────────────────────────────
+    private getFechaFormateada(): string {
+        const hoy = new Date();
+        const dd = String(hoy.getDate()).padStart(2, '0');
+        const mm = String(hoy.getMonth() + 1).padStart(2, '0');
+        const yyyy = hoy.getFullYear();
+        return `${dd}${mm}${yyyy}`;
     }
 }

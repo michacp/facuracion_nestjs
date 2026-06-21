@@ -8,6 +8,9 @@ import { ListFacturasResponseDto } from './dto/response/list-facturas-response.d
 import { SyncFacturaDoc } from './docs/sync-factura.doc';
 import { SyncFacturaBodyDto } from './dto/request/sync-factura-body.dto';
 import { SyncFacturaResponseDto } from './dto/response/sync-factura-response.dto';
+import { RetryFacturaBodyDto } from './dto/request/retry-factura-body.dto';
+import { RetryFacturaResponseDto } from './dto/response/retry-factura-response.dto';
+import { RetryFacturaDoc } from './docs/retry-factura.doc';
 
 @Controller('facturas')
 export class FacturasController {
@@ -31,5 +34,15 @@ export class FacturasController {
     @CurrentUser() user: JwtPayload,
   ): Promise<SyncFacturaResponseDto> {
     return this.facturasService.syncFactura(body, user);
+  }
+
+  @Post('retry')
+  @Auth()
+  @RetryFacturaDoc()
+  async retry(
+    @Body() body: RetryFacturaBodyDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<RetryFacturaResponseDto> {
+    return this.facturasService.retryFactura(body, user);
   }
 }

@@ -106,19 +106,9 @@ export class ItemsService {
                 select: { item_id: true },
             });
 
-            // 2. Lote inicial — SOLO PRODUCTOS con stock > 0
-            //    Servicios no manejan inventario → se omite
-            if (!esServicio && dto.stock && dto.stock > 0) {
-                await tx.itemLote.create({
-                    data: {
-                        item_id: item.item_id,
-                        cantidad: dto.stock,
-                        numero_lote: '001',
-                    },
-                });
-            }
 
-            // 3. Modelos compatibles
+
+            // 2. Modelos compatibles
             if (dto.modelos_ids && dto.modelos_ids.length > 0) {
                 await tx.itemModelo.createMany({
                     data: dto.modelos_ids.map((modeloId) => ({

@@ -17,6 +17,7 @@ import { PdfModule } from './pdf/pdf.module';
 import { ProveedoresModule } from './proveedores/proveedores.module';
 import { ComprasModule } from './compras/compras.module';
 import { ReportesModule } from './reportes/reportes.module';
+import { EmpresaModule } from './empresa/empresa.module';
 
 @Module({
   imports: [ConfigModule.forRoot({
@@ -25,7 +26,7 @@ import { ReportesModule } from './reportes/reportes.module';
     // cache: true,          // opcional, mejora performance
   }), GoogleDriveModule, PrismaModule, AuthModule, ItemsModule,
     GsmArenaModule, CatalogosModule, ClientesModule,
-    VentasModule, AppMulterModule, FirmasModule, PdfModule, ProveedoresModule, ComprasModule, ReportesModule],
+    VentasModule, AppMulterModule, FirmasModule, PdfModule, ProveedoresModule, ComprasModule, ReportesModule, EmpresaModule],
   controllers: [AppController],
   providers: [AppService, BootstrapService],
 })

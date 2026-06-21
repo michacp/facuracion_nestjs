@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Post, Put } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { ItemsService } from './items.service';
 import { Auth, CurrentUser } from '../auth/decorators';
@@ -36,7 +36,7 @@ export class ItemsController {
   async getNewData(
     @CurrentUser() user: JwtPayload,
   ): Promise<GetNewDataResponseDto> {
-    console.log(user)
+    // console.log(user)
     // Pasamos el payload del usuario al servicio por si requieres filtrar por empresa en el futuro
     return await this.itemsService.getNewProductData(user);
   }
@@ -79,7 +79,7 @@ export class ItemsController {
     return this.itemsService.findOneItem(body, user);
   }
 
-  @Post('editproduct')
+  @Put('editproduct')
   @Auth()
   @EditItemDoc()
   @HttpCode(200)

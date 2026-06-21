@@ -8,6 +8,7 @@ import { CategoryItemDto } from '../items/dto/response/list-items-response.dto';
 import { TipoIdentificacionDto } from '../clientes/dto/response/get-new-data-client-response.dto';
 import { IdNameDto, TaxItemDto } from './dto/response/catalogos-shared.dto';
 import { GetNewDataComprasResponseDto } from './dto/response/get-new-data-compras-response.dto';
+import { SelectOptionDto } from './dto/response/select-option.dto';
 
 @Injectable()
 export class CatalogosService {
@@ -31,7 +32,6 @@ export class CatalogosService {
             id: m.models_id,
             name: m.models_name,
         }));
-        console.log(models)
         return models;
     }
     async findPercentajes(dto: FindPercentajesBodyDto): Promise<TarifaItemDto[]> {
@@ -190,5 +190,17 @@ export class CatalogosService {
             tiposIdentificacion,
             paises,
         };
+    }
+    async getRoles(isSuperAdmin: boolean): Promise<SelectOptionDto[]> {
+        const roles = await this.prisma.role.findMany({
+            where: isSuperAdmin ? {} : { rol_nombre: { not: 'SUPERADMIN' } },
+            orderBy: { rol_nombre: 'asc' },
+            select: { rol_id: true, rol_nombre: true },
+        });
+
+        return roles.map((r) => ({
+            id: r.rol_id,
+            name: r.rol_nombre,
+        }));
     }
 }

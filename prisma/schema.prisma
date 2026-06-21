@@ -290,7 +290,7 @@ model UsuarioEmpresa {
   usuario_empresa_codEmi    String   @default("001") @db.VarChar(20)
   usuario_empresa_rolId     Int
   fecha_asignacion          DateTime @default(now())
-
+  deleted_at                DateTime? // ← soft delete del vínculo
   usuario Usuario @relation(fields: [usuario_empresa_usuarioId], references: [usuarios_id])
   empresa Empresa @relation(fields: [usuario_empresa_empresaId], references: [empresas_id])
   rol     Role    @relation(fields: [usuario_empresa_rolId], references: [rol_id])

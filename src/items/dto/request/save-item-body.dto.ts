@@ -36,10 +36,7 @@ export class SaveItemBodyDto {
         description: 'Stock inicial — ignorado si tipo_item = 2 (Servicio)',
         example: 10,
     })
-    @IsInt()
-    @Min(0)
-    @IsOptional()
-    stock?: number;
+
 
     @ApiPropertyOptional({
         description: 'IDs de modelos compatibles',

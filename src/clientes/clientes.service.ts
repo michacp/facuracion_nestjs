@@ -14,6 +14,11 @@ import type { SaveClientResponseDto } from './dto/response/save-client-response.
 import type { FindClientResponseDto } from './dto/response/find-client-response.dto';
 import { DeleteClientBodyDto } from './dto/request/delete-client-body.dto';
 import { EditClientBodyDto } from './dto/request/edit-client-body.dto';
+import { ListClientesBodyDto } from './dto/request/list-clientes-body.dto';
+import { ListClientesResponseDto } from './dto/response/list-clientes-response.dto';
+import { Prisma } from '@prisma/client';
+import { GetClienteBodyDto } from './dto/request/get-cliente-body.dto';
+import { GetClienteResponseDto } from './dto/response/get-cliente-response.dto';
 
 @Injectable()
 export class ClientesService {
@@ -192,5 +197,122 @@ export class ClientesService {
             id: c.id,
             name: `${c.identificacion} - ${c.razon_social}`,
         }));
+    }
+
+    async listClientes(
+        dto: ListClientesBodyDto,
+        user: JwtPayload,
+    ): Promise<ListClientesResponseDto> {
+        const empresaId = user.empresaId;
+        if (!empresaId) throw new UnauthorizedException();
+
+        const { search, page = 0, limit = 30 } = dto;
+
+        const palabras = search
+            ?.trim()
+            .split(/\s+/)
+            .filter((p) => p.length > 0)
+            ?? [];
+
+        const andConditions: Prisma.ClienteWhereInput[] = palabras.map((palabra) => ({
+            OR: [
+                { razon_social: { contains: palabra, mode: 'insensitive' } },
+                { identificacion: { contains: palabra, mode: 'insensitive' } },
+                {
+                    tipoIdentificacion: {
+                        descripcion: { contains: palabra, mode: 'insensitive' },
+                    },
+                },
+            ],
+        }));
+
+        const where: Prisma.ClienteWhereInput = {
+            empresa_id: empresaId,
+            deleted_at: null,
+            ...(andConditions.length > 0 && { AND: andConditions }),
+        };
+
+        const [total, rows] = await Promise.all([
+            this.prisma.cliente.count({ where }),
+            this.prisma.cliente.findMany({
+                where,
+                orderBy: { razon_social: 'asc' },
+                skip: page * limit,
+                take: limit,
+                select: {
+                    id: true,
+                    razon_social: true,
+                    identificacion: true,
+                    email: true,
+                    telefono: true,
+                    direccion: true,
+                    tipoIdentificacion: {
+                        select: { descripcion: true }, // ← el nombre, no el código
+                    },
+                },
+            }),
+        ]);
+
+        return {
+            total,
+            clientes: rows.map((c) => ({
+                id: c.id,
+                razon_social: c.razon_social,
+                identificacion: c.identificacion,
+                tipo_identificacion: c.tipoIdentificacion.descripcion, // ← nombre legible
+                email: c.email,
+                telefono: c.telefono,
+                direccion: c.direccion,
+            })),
+        };
+    }
+    async getCliente(
+        dto: GetClienteBodyDto,
+        user: JwtPayload,
+    ): Promise<GetClienteResponseDto> {
+        const empresaId = user.empresaId;
+        if (!empresaId) throw new UnauthorizedException();
+
+        const cliente = await this.prisma.cliente.findFirst({
+            where: {
+                id: dto.id,
+                empresa_id: empresaId,
+                deleted_at: null,
+            },
+            select: {
+                id: true,
+                identificacion: true,
+                razon_social: true,
+                direccion: true,
+                email: true,
+                telefono: true,
+                es_consumidor_final: true,
+                tipoIdentificacion: {
+                    select: { codigo: true, descripcion: true },
+                },
+                camposAdicionales: {
+                    select: { clave: true, valor: true },
+                    orderBy: { clave: 'asc' },
+                },
+            },
+        });
+
+        if (!cliente) throw new NotFoundException('Cliente no encontrado');
+
+        return {
+            id: cliente.id,
+            identificacion: cliente.identificacion,
+            tipo_identificacion: cliente.tipoIdentificacion.codigo,
+            tipo_identificacion_nombre: cliente.tipoIdentificacion.descripcion,
+            razon_social: cliente.razon_social,
+            direccion: cliente.direccion,
+            email: cliente.email,
+            telefono: cliente.telefono,
+            es_consumidor_final: cliente.es_consumidor_final,
+            camposAdicionales: cliente.camposAdicionales.map((c) => ({
+                clave: c.clave,
+                valor: c.valor,
+            })),
+        };
     }
 }
