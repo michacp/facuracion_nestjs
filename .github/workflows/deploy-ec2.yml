@@ -38,16 +38,21 @@ jobs:
             echo "📦 Instalando dependencias..."
             npm install
 
-            # 5. Generar cliente Prisma
+            # 5. Aplicar migraciones en la base de datos de producción
+            # (Usa 'migrate deploy' para entornos productivos sin borrar datos)
+            echo "🗄️ Ejecutando migraciones de Prisma en producción..."
+            npx prisma migrate deploy
+
+            # 6. Generar cliente Prisma
+            # (Obligatorio después de actualizar el esquema para que NestJS reconozca los tipos)
             echo "🔄 Generando cliente de Prisma..."
             npx prisma generate
 
-            # 6. Compilar con SWC
+            # 7. Compilar con SWC
             echo "🏗️ Compilando el proyecto con SWC..."
             npx nest build --path tsconfig.build.json --builder swc
 
-            # 7. Despliegue en PM2
-            # Se sube el límite a 400MB para evitar los crasheos por OOM
+            # 8. Despliegue en PM2
             echo "🚀 Reiniciando aplicación en PM2..."
             if pm2 describe vffac-nestjs > /dev/null 2>&1; then
               pm2 restart vffac-nestjs --update-env
@@ -55,7 +60,7 @@ jobs:
               pm2 start dist/main.js --name "vffac-nestjs" --node-args="--max-old-space-size=400" --update-env
             fi
 
-            # 8. Guardar estado PM2
+            # 9. Guardar estado PM2
             pm2 save
 
             echo "✅ ¡Despliegue completado con éxito!"
