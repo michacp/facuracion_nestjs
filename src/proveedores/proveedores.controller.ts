@@ -11,6 +11,17 @@ import { FindProveedorBodyDto } from './dto/request/find-proveedor-body.dto';
 import type { GetNewDataProveedorResponseDto } from './dto/response/get-new-data-proveedor-response.dto';
 import type { SaveProveedorResponseDto } from './dto/response/save-proveedor-response.dto';
 import type { FindProveedorResponseDto } from './dto/response/find-proveedor-response.dto';
+import { ListProveedoresDoc } from './docs/list-proveedores.doc';
+import { ListProveedoresBodyDto } from './dto/request/list-proveedores-body.dto';
+import { ListProveedoresResponseDto } from './dto/response/list-proveedores-response.dto';
+import { GetProveedorDoc } from './docs/get-proveedor.doc';
+import { GetProveedorBodyDto } from './dto/request/get-proveedor-body.dto';
+import { GetProveedorResponseDto } from './dto/response/get-proveedor-response.dto';
+import { UpdateProveedorDoc } from './docs/update-proveedor.doc';
+import { UpdateProveedorBodyDto } from './dto/request/update-proveedor-body.dto';
+import { DeleteProveedorDoc } from './docs/delete-proveedor.doc';
+import { DeleteProveedorBodyDto } from './dto/request/delete-proveedor-body.dto';
+import { DeleteProveedorResponseDto } from './dto/response/delete-proveedor-response.dto';
 
 @ApiTags('Proveedores')
 @Controller('proveedores')
@@ -42,5 +53,45 @@ export class ProveedoresController {
     @CurrentUser() user: JwtPayload,
   ): Promise<FindProveedorResponseDto[]> {
     return this.proveedoresService.find(body, user);
+  }
+
+  @Post('list')
+  @Auth()
+  @ListProveedoresDoc()
+  async list(
+    @Body() body: ListProveedoresBodyDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<ListProveedoresResponseDto> {
+    return this.proveedoresService.listProveedores(body, user);
+  }
+
+  @Post('get')
+  @Auth()
+  @GetProveedorDoc()
+  async get(
+    @Body() body: GetProveedorBodyDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<GetProveedorResponseDto> {
+    return this.proveedoresService.getProveedor(body, user);
+  }
+
+  @Post('update')
+  @Auth()
+  @UpdateProveedorDoc()
+  async update(
+    @Body() body: UpdateProveedorBodyDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<SaveProveedorResponseDto> {
+    return this.proveedoresService.updateProveedor(body, user);
+  }
+
+  @Post('delete')
+  @Auth()
+  @DeleteProveedorDoc()
+  async delete(
+    @Body() body: DeleteProveedorBodyDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<DeleteProveedorResponseDto> {
+    return this.proveedoresService.deleteProveedor(body, user);
   }
 }

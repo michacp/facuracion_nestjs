@@ -50,10 +50,9 @@ export class VentasController {
   @Auth()
   @ListSalesDoc()
   async list(
-    @Body() body: any,
+    @Body() body: ListSalesBodyDto, // ← tipado correctamente en vez de any
     @CurrentUser() user: JwtPayload,
   ): Promise<ListSalesResponseDto> {
-
     return this.ventasService.listSales(body, user);
   }
 }

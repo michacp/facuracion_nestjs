@@ -292,7 +292,9 @@ export class VentasService {
 
         const {
             searchQuery,
-            forma_pago,
+            tipo_comprobante_id,
+            fechaDesde,
+            fechaHasta,
             pageIndex = 0,
             pageSize = 30,
         } = dto.filters ?? {};
@@ -303,11 +305,19 @@ export class VentasService {
         const where: Prisma.VentaWhereInput = {
             empresa_id: empresaId,
 
-            // Filtro por forma de pago
-            ...(forma_pago?.trim()
+            // Filtro por tipo de comprobante
+            ...(tipo_comprobante_id
+                ? { tipo_comprobante_id }
+                : {}),
+
+            // Filtro por rango de fechas
+            ...(fechaDesde || fechaHasta
                 ? {
-                    formaPago: {
-                        nombre: { contains: forma_pago.trim(), mode: 'insensitive' },
+                    fecha_emision: {
+                        ...(fechaDesde && { gte: new Date(fechaDesde) }),
+                        ...(fechaHasta && {
+                            lte: new Date(new Date(fechaHasta).setHours(23, 59, 59, 999)),
+                        }),
                     },
                 }
                 : {}),
@@ -324,8 +334,8 @@ export class VentasService {
                 : {}),
         };
 
-        // ── Ejecutar count + data en paralelo ────────────────────────────────
-        const [total, rows] = await Promise.all([
+        // ── Ejecutar count + data + catálogo en paralelo ─────────────────────
+        const [total, rows, tiposComprobante] = await Promise.all([
 
             this.prisma.venta.count({ where }),
 
@@ -374,6 +384,12 @@ export class VentasService {
                     },
                 },
             }),
+
+            // Catálogo de tipos de comprobante para el selector del frontend
+            this.prisma.tipoComprobante.findMany({
+                select: { tipo_comprobante_id: true, nombre: true },
+                orderBy: { nombre: 'asc' },
+            }),
         ]);
 
         // ── Mapear ───────────────────────────────────────────────────────────
@@ -399,6 +415,13 @@ export class VentasService {
             }),
         }));
 
-        return { total, sales };
+        return {
+            total,
+            sales,
+            tiposComprobante: tiposComprobante.map((t) => ({
+                id: t.tipo_comprobante_id,
+                name: t.nombre,
+            })),
+        };
     }
 }

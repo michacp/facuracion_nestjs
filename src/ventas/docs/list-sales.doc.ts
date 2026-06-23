@@ -12,13 +12,13 @@ export const ListSalesDoc = () =>
             summary: 'Listar ventas paginadas con filtros',
             description:
                 'Devuelve ventas de la empresa del JWT con paginación y filtros opcionales. ' +
-                'Soporta búsqueda por número de venta o cliente, y rango de fechas. ' +
-                'Incluye ítems del detalle resolviendo productos (lote) y servicios (item directo). ' +
-                'Migrado desde POST /sales/list (Express legacy) — agrega paginación y multi-tenant.',
+                'Soporta búsqueda por número de venta o cliente, filtro por tipo de comprobante ' +
+                'y rango de fechas. Incluye catálogo de tipos de comprobante para el selector. ' +
+                'Incluye ítems del detalle resolviendo productos (lote) y servicios (item directo).',
         }),
         ApiBody({ type: ListSalesBodyDto }),
         ApiOkResponse({
-            description: 'Ventas paginadas con detalle de ítems',
+            description: 'Ventas paginadas con detalle de ítems y catálogo de filtros',
             type: ListSalesResponseDto,
         }),
         ApiUnauthorizedResponse({ description: 'Token JWT ausente o expirado' }),

@@ -1,5 +1,8 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString, IsInt, Min, IsObject, ValidateNested } from 'class-validator';
+import {
+    IsOptional, IsString, IsInt, IsDateString,
+    Min, IsObject, ValidateNested,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 class SalesFiltersDto {
@@ -8,10 +11,21 @@ class SalesFiltersDto {
     @IsOptional()
     searchQuery?: string;
 
-    @ApiPropertyOptional({ example: '', description: 'Forma de pago' })
-    @IsString()
+    @ApiPropertyOptional({ example: 1, description: 'ID del tipo de comprobante' })
+    @IsInt()
     @IsOptional()
-    forma_pago?: string;
+    @Type(() => Number)
+    tipo_comprobante_id?: number;
+
+    @ApiPropertyOptional({ example: '2024-01-01' })
+    @IsDateString()
+    @IsOptional()
+    fechaDesde?: string;
+
+    @ApiPropertyOptional({ example: '2024-12-31' })
+    @IsDateString()
+    @IsOptional()
+    fechaHasta?: string;
 
     @ApiPropertyOptional({ example: 0, description: 'Índice de página (0-based)' })
     @IsInt()

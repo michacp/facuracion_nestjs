@@ -40,10 +40,21 @@ export class SaleListItemDto {
     items!: SaleListItemDetailDto[];
 }
 
+export class TipoComprobanteItemDto {
+    @ApiProperty({ example: 1 })
+    id!: number;
+
+    @ApiProperty({ example: 'FACTURA' })
+    name!: string;
+}
+
 export class ListSalesResponseDto {
     @ApiProperty({ example: 100 })
     total!: number;
 
     @ApiProperty({ type: [SaleListItemDto] })
     sales!: SaleListItemDto[];
+
+    @ApiProperty({ type: [TipoComprobanteItemDto] })
+    tiposComprobante!: TipoComprobanteItemDto[];
 }
