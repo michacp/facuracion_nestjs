@@ -1,66 +1,68 @@
-name: Deploy NestJS to EC2
-
+name: Deploy to Firebase Hosting on merge
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
 
 jobs:
-  deploy:
+  build_and_deploy:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Actualizar código y Desplegar en EC2 via SSH
-        uses: appleboy/ssh-action@v1.0.3
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USERNAME }}
-          key: ${{ secrets.EC2_SSH_KEY }}
-          port: ${{ secrets.EC2_PORT }}
-          script: |
-            set -e  # Si cualquier comando falla, detener el script
+          node-version: '22.13'
 
-            # 1. Navegar al proyecto
-            cd /home/ubuntu/proyects/vffac/backend-nestjs
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
 
-            # 2. Cargar NVM/Node antes de cualquier comando npm
-            export NVM_DIR="$HOME/.nvm"
-            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+      # ── 1. PASO DE BUILD CON TODAS LAS VARIABLES DE ENTORNO ────────────────
+      - name: Build Next.js (Export)
+        env:
+          NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
+          NEXT_PUBLIC_FIREBASE_API_KEY: ${{ secrets.NEXT_PUBLIC_FIREBASE_API_KEY }}
+          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ secrets.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN }}
+          NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}
+          NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ${{ secrets.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET }}
+          NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID }}
+          NEXT_PUBLIC_FIREBASE_APP_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_APP_ID }}
+        run: npm run build
 
-            # 3. Actualizar repositorio
-            echo "📥 Trayendo los últimos cambios de Git..."
-            git fetch --all
-            git reset --hard origin/main
+      # ── 2. DESPLIEGUE EN FIREBASE HOSTING ─────────────────────────────────
+      - uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_FACTURACION_7BDE0 }}
+          channelId: live
+          projectId: facturacion-7bde0
 
-            # 4. Instalar dependencias
-            echo "📦 Instalando dependencias..."
-            npm install
-
-            # 5. Aplicar migraciones en la base de datos de producción
-            # (Usa 'migrate deploy' para entornos productivos sin borrar datos)
-            echo "🗄️ Ejecutando migraciones de Prisma en producción..."
-            npx prisma migrate deploy
-
-            # 6. Generar cliente Prisma
-            # (Obligatorio después de actualizar el esquema para que NestJS reconozca los tipos)
-            echo "🔄 Generando cliente de Prisma..."
-            npx prisma generate
-
-            # 7. Compilar con SWC
-            echo "🏗️ Compilando el proyecto con SWC..."
-            npx nest build --path tsconfig.build.json --builder swc
-
-            # 8. Despliegue en PM2
-            echo "🚀 Reiniciando aplicación en PM2..."
-            if pm2 describe vffac-nestjs > /dev/null 2>&1; then
-              pm2 restart vffac-nestjs --update-env
-            else
-              pm2 start dist/main.js --name "vffac-nestjs" --node-args="--max-old-space-size=400" --update-env
-            fi
-
-            # 9. Guardar estado PM2
-            pm2 save
-
-            echo "✅ ¡Despliegue completado con éxito!"
+      # ── 3. ACTUALIZAR VERSIÓN EN FIRESTORE (NATIVO CON CURL) ──────────────
+      - name: Actualizar versión en Firestore automáticamente
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_FACTURACION_7BDE0 }}
+        run: |
+          # 1. Creamos un archivo temporal con la credencial de la cuenta de servicio
+          echo "$FIREBASE_SERVICE_ACCOUNT" > gcp-key.json
+          
+          # 2. Autenticamos y obtenemos un Access Token de Google oficial
+          # Instalamos una mini herramienta nativa para firmar tokens JWT de Google
+          sudo apt-get install -y jq
+          
+          # Inicializamos el SDK de Google Cloud que viene preinstalado en el Runner
+          gcloud auth activate-service-account --key-file=gcp-key.json
+          TOKEN=$(gcloud auth print-access-token)
+          
+          # 3. Guardamos el hash del commit actual de GitHub como versión
+          VERSION_APP="${{ github.sha }}"
+          echo "Actualizando versión en Firestore a: $VERSION_APP"
+          
+          # 4. Hacemos la mutación directa en Firestore usando la API REST corporativa de Google
+          curl -X PATCH "https://firestore.googleapis.com/v1/projects/facturacion-7bde0/databases/(default)/documents/configuracion/version_app?updateMask.fieldPaths=version" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"fields\": {\"version\": {\"stringValue\": \"$VERSION_APP\"}}}"
+            
+          # Limpieza por seguridad
+          rm gcp-key.json
