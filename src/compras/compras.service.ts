@@ -75,13 +75,7 @@ export class ComprasService {
 
         if (!sucursal) throw new NotFoundException('Sucursal MATRIZ no encontrada');
 
-        // ── 4. Estado pago inicial = PENDIENTE ────────────────────────────
-        const estadoPendiente = await this.prisma.estadoPagoCompra.findFirst({
-            where: { estado_pago_codigo: 'PENDIENTE' },
-            select: { estado_pago_id: true },
-        });
-
-        if (!estadoPendiente) throw new NotFoundException('Estado PENDIENTE no configurado');
+        // ❌ PASO 4 ELIMINADO: Ya no buscamos 'PENDIENTE' por defecto.
 
         // ── 5. Transacción ────────────────────────────────────────────────
         const result = await this.prisma.$transaction(async (tx) => {
@@ -94,7 +88,7 @@ export class ComprasService {
                     sucursal_id: sucursal.sucursales_id,
                     usuario_id: user.sub,
                     tipo_doc_id: dto.tipo_doc_id,
-                    estado_pago_id: estadoPendiente.estado_pago_id,
+                    estado_pago_id: dto.estado_pago_id, // 👈 ¡Ahora usamos el que viene del DTO!
                     numero_documento: dto.numero_documento,
                     fecha_emision: new Date(dto.fecha_emision),
                     subtotal: dto.subtotal,
