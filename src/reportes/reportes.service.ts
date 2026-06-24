@@ -7,6 +7,10 @@ import type { StockBajoResponseDto } from './dto/response/stock-bajo-response.dt
 import type { AlertasResponseDto } from './dto/response/alertas-response.dto';
 import type { TopProductosResponseDto } from './dto/response/top-productos-response.dto';
 import type { TopClientesResponseDto } from './dto/response/top-clientes-response.dto';
+import { ReporteIvaBodyDto } from './dto/request/reporte-iva-body.dto';
+import { IvaCompraDetalleDto, IvaTarifaResumenDto, IvaVentaDetalleDto, ReporteIvaResponseDto } from './dto/response/reporte-iva-response.dto';
+import { InventarioItemDto, ReporteInventarioResponseDto } from './dto/response/reporte-inventario-response.dto';
+import { ProveedorPendienteDto, ReporteCuentasPagarResponseDto } from './dto/response/reporte-cuentas-pagar-response.dto';
 
 @Injectable()
 export class ReportesService {
@@ -459,5 +463,316 @@ export class ReportesService {
         });
 
         return { clientes: resultado, periodo };
+    }
+
+    // ── REPORTE IVA MENSUAL ────────────────────────────────────────────────
+    async getReporteIva(
+        dto: ReporteIvaBodyDto,
+        user: JwtPayload,
+    ): Promise<ReporteIvaResponseDto> {
+        const empresaId = user.empresaId;
+        if (!empresaId) throw new UnauthorizedException();
+
+        const desde = new Date(dto.anio, dto.mes - 1, 1);
+        const hasta = new Date(dto.anio, dto.mes, 0, 23, 59, 59, 999); // último día del mes
+
+        // ── 1. Detalle de ventas del período (a nivel de línea, cada item) ───
+        const detallesVentaRaw = await this.prisma.detalleVenta.findMany({
+            where: {
+                venta: {
+                    empresa_id: empresaId,
+                    fecha_emision: { gte: desde, lte: hasta },
+                },
+            },
+            select: {
+                venta_id: true,
+                cantidad: true,
+                precio_unitario: true,
+                descuento: true,
+                tarifaImpuesto: { select: { tarifa_porcentaje: true } },
+                venta: {
+                    select: {
+                        numero_venta: true,
+                        fecha_emision: true,
+                        cliente: { select: { razon_social: true, identificacion: true } },
+                    },
+                },
+                lote: { select: { item: { select: { item_nombre: true } } } },
+                item: { select: { item_nombre: true } },
+            },
+        });
+
+        const detalle_ventas: IvaVentaDetalleDto[] = detallesVentaRaw.map((d) => {
+            const base = Number(d.cantidad) * Number(d.precio_unitario) - Number(d.descuento);
+            const tarifa = Number(d.tarifaImpuesto.tarifa_porcentaje);
+            const iva = parseFloat((base * tarifa / 100).toFixed(2));
+            const nombreItem = d.lote?.item.item_nombre ?? d.item?.item_nombre ?? '—';
+
+            return {
+                venta_id: d.venta_id,
+                numero_venta: d.venta.numero_venta,
+                fecha_emision: d.venta.fecha_emision,
+                cliente: d.venta.cliente.razon_social,
+                identificacion: d.venta.cliente.identificacion,
+                item_nombre: nombreItem,
+                cantidad: d.cantidad,
+                precio_unitario: Number(d.precio_unitario),
+                descuento: Number(d.descuento),
+                base_imponible: parseFloat(base.toFixed(2)),
+                tarifa_porcentaje: tarifa,
+                iva_calculado: iva,
+            };
+        });
+
+        // ── 2. Agrupar resumen ventas por tarifa ──────────────────────────────
+        const resumenVentasMap = new Map<number, { base: number; iva: number; count: number }>();
+        for (const d of detalle_ventas) {
+            const acc = resumenVentasMap.get(d.tarifa_porcentaje) ?? { base: 0, iva: 0, count: 0 };
+            acc.base += d.base_imponible;
+            acc.iva += d.iva_calculado;
+            acc.count += 1;
+            resumenVentasMap.set(d.tarifa_porcentaje, acc);
+        }
+
+        const resumen_ventas: IvaTarifaResumenDto[] = [...resumenVentasMap.entries()].map(
+            ([tarifa, v]) => ({
+                tarifa_porcentaje: tarifa,
+                base_imponible: parseFloat(v.base.toFixed(2)),
+                iva: parseFloat(v.iva.toFixed(2)),
+                cantidad_registros: v.count,
+            }),
+        );
+
+        // ── 3. Compras del período (a nivel de cabecera) ──────────────────────
+        const comprasRaw = await this.prisma.compra.findMany({
+            where: {
+                empresa_id: empresaId,
+                fecha_emision: { gte: desde, lte: hasta },
+            },
+            select: {
+                compra_id: true,
+                numero_documento: true,
+                fecha_emision: true,
+                subtotal: true,
+                descuento_global: true,
+                porcentaje_impuesto: true,
+                valor_impuesto: true,
+                proveedor: { select: { razon_social: true, identificacion: true } },
+            },
+        });
+
+        const detalle_compras: IvaCompraDetalleDto[] = comprasRaw.map((c) => {
+            const base = Number(c.subtotal) - Number(c.descuento_global);
+            return {
+                compra_id: c.compra_id,
+                numero_documento: c.numero_documento,
+                fecha_emision: c.fecha_emision,
+                proveedor: c.proveedor.razon_social,
+                proveedor_identificacion: c.proveedor.identificacion,
+                base_imponible: parseFloat(base.toFixed(2)),
+                tarifa_porcentaje: Number(c.porcentaje_impuesto),
+                iva: Number(c.valor_impuesto),
+            };
+        });
+
+        // ── 4. Agrupar resumen compras por tarifa ─────────────────────────────
+        const resumenComprasMap = new Map<number, { base: number; iva: number; count: number }>();
+        for (const c of detalle_compras) {
+            const acc = resumenComprasMap.get(c.tarifa_porcentaje) ?? { base: 0, iva: 0, count: 0 };
+            acc.base += c.base_imponible;
+            acc.iva += c.iva;
+            acc.count += 1;
+            resumenComprasMap.set(c.tarifa_porcentaje, acc);
+        }
+
+        const resumen_compras: IvaTarifaResumenDto[] = [...resumenComprasMap.entries()].map(
+            ([tarifa, v]) => ({
+                tarifa_porcentaje: tarifa,
+                base_imponible: parseFloat(v.base.toFixed(2)),
+                iva: parseFloat(v.iva.toFixed(2)),
+                cantidad_registros: v.count,
+            }),
+        );
+
+        const ivaTotalVentas = parseFloat(detalle_ventas.reduce((a, v) => a + v.iva_calculado, 0).toFixed(2));
+        const ivaTotalCompras = parseFloat(detalle_compras.reduce((a, c) => a + c.iva, 0).toFixed(2));
+
+        return {
+            mes: dto.mes,
+            anio: dto.anio,
+            resumen_ventas,
+            resumen_compras,
+            iva_total_ventas: ivaTotalVentas,
+            iva_total_compras: ivaTotalCompras,
+            iva_a_pagar: parseFloat((ivaTotalVentas - ivaTotalCompras).toFixed(2)),
+            detalle_ventas,
+            detalle_compras,
+        };
+    }
+
+    // ── REPORTE INVENTARIO VALORADO (CPP) ─────────────────────────────────
+    async getInventarioValorado(
+        user: JwtPayload,
+    ): Promise<ReporteInventarioResponseDto> {
+        const empresaId = user.empresaId;
+        if (!empresaId) throw new UnauthorizedException();
+
+        // Ítems activos tipo PRODUCTO con stock
+        const items = await this.prisma.item.findMany({
+            where: {
+                empresa_id: empresaId,
+                item_activo: true,
+                tipo_item_id: 1,
+                lotes: { some: { cantidad: { gt: 0 } } },
+            },
+            select: {
+                item_id: true,
+                item_codigo_principal: true,
+                item_nombre: true,
+                lotes: {
+                    where: { cantidad: { gt: 0 } },
+                    select: {
+                        lote_id: true,
+                        numero_lote: true,
+                        cantidad: true,
+                        detallesCompra: {
+                            select: { costo_unitario: true },
+                            take: 1, // un lote proviene de una sola línea de compra
+                            orderBy: { detalle_id: 'asc' },
+                        },
+                    },
+                },
+            },
+        });
+
+        const itemsResult: InventarioItemDto[] = items.map((i) => {
+            const lotesDetalle = i.lotes.map((l) => {
+                const costoOrigen = Number(l.detallesCompra[0]?.costo_unitario ?? 0);
+                return {
+                    lote_id: l.lote_id,
+                    numero_lote: l.numero_lote,
+                    cantidad: l.cantidad,
+                    costo_origen: costoOrigen,
+                    valor_lote: parseFloat((l.cantidad * costoOrigen).toFixed(2)),
+                };
+            });
+
+            const stockTotal = lotesDetalle.reduce((a, l) => a + l.cantidad, 0);
+            const valorTotal = lotesDetalle.reduce((a, l) => a + l.valor_lote, 0);
+
+            // CPP = valor total ponderado / stock total
+            const costoPromedio = stockTotal > 0
+                ? parseFloat((valorTotal / stockTotal).toFixed(4))
+                : 0;
+
+            return {
+                item_id: i.item_id,
+                codigo: i.item_codigo_principal,
+                nombre: i.item_nombre,
+                stock_total: stockTotal,
+                costo_promedio: costoPromedio,
+                valor_total: parseFloat(valorTotal.toFixed(2)),
+                lotes: lotesDetalle,
+            };
+        });
+
+        const valorTotalInventario = parseFloat(
+            itemsResult.reduce((a, i) => a + i.valor_total, 0).toFixed(2),
+        );
+
+        return {
+            fecha_corte: new Date(),
+            total_items: itemsResult.length,
+            valor_total_inventario: valorTotalInventario,
+            items: itemsResult,
+        };
+    }
+
+    // ── REPORTE CUENTAS POR PAGAR ──────────────────────────────────────────
+    async getCuentasPorPagar(
+        user: JwtPayload,
+    ): Promise<ReporteCuentasPagarResponseDto> {
+        const empresaId = user.empresaId;
+        if (!empresaId) throw new UnauthorizedException();
+
+        const compras = await this.prisma.compra.findMany({
+            where: {
+                empresa_id: empresaId,
+                estadoPago: { estado_pago_codigo: { in: ['PENDIENTE', 'PARCIAL'] } },
+            },
+            orderBy: { fecha_emision: 'asc' },
+            select: {
+                compra_id: true,
+                numero_documento: true,
+                fecha_emision: true,
+                total_pagar: true,
+                total_pagado: true,
+                estadoPago: { select: { estado_pago_codigo: true } },
+                proveedor: {
+                    select: {
+                        proveedor_id: true,
+                        razon_social: true,
+                        identificacion: true,
+                    },
+                },
+            },
+        });
+
+        const ahora = new Date();
+
+        // ── Agrupar por proveedor ──────────────────────────────────────────
+        const proveedorMap = new Map<number, ProveedorPendienteDto>();
+
+        for (const c of compras) {
+            const saldo = parseFloat(
+                (Number(c.total_pagar) - Number(c.total_pagado)).toFixed(2),
+            );
+            if (saldo <= 0) continue;
+
+            const diasAntiguedad = Math.floor(
+                (ahora.getTime() - new Date(c.fecha_emision).getTime()) / (1000 * 60 * 60 * 24),
+            );
+
+            const compraItem = {
+                compra_id: c.compra_id,
+                numero_documento: c.numero_documento,
+                fecha_emision: c.fecha_emision,
+                total_pagar: Number(c.total_pagar),
+                total_pagado: Number(c.total_pagado),
+                saldo_pendiente: saldo,
+                estado_pago: c.estadoPago.estado_pago_codigo,
+                dias_antiguedad: diasAntiguedad,
+            };
+
+            const existing = proveedorMap.get(c.proveedor.proveedor_id);
+            if (existing) {
+                existing.saldo_total += saldo;
+                existing.compras.push(compraItem);
+            } else {
+                proveedorMap.set(c.proveedor.proveedor_id, {
+                    proveedor_id: c.proveedor.proveedor_id,
+                    razon_social: c.proveedor.razon_social,
+                    identificacion: c.proveedor.identificacion,
+                    saldo_total: saldo,
+                    compras: [compraItem],
+                });
+            }
+        }
+
+        const proveedores = [...proveedorMap.values()].map((p) => ({
+            ...p,
+            saldo_total: parseFloat(p.saldo_total.toFixed(2)),
+        }));
+
+        const totalPorPagar = parseFloat(
+            proveedores.reduce((a, p) => a + p.saldo_total, 0).toFixed(2),
+        );
+
+        return {
+            fecha_corte: ahora,
+            total_por_pagar: totalPorPagar,
+            total_proveedores: proveedores.length,
+            proveedores,
+        };
     }
 }

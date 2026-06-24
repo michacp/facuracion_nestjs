@@ -1,4 +1,4 @@
-import { Controller, Get, Query } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 import { ApiTags, ApiQuery } from '@nestjs/swagger';
 import { ReportesService } from './reportes.service';
 import { Auth, CurrentUser } from '../auth/decorators';
@@ -9,6 +9,13 @@ import type { StockBajoResponseDto } from './dto/response/stock-bajo-response.dt
 import type { AlertasResponseDto } from './dto/response/alertas-response.dto';
 import type { TopProductosResponseDto } from './dto/response/top-productos-response.dto';
 import type { TopClientesResponseDto } from './dto/response/top-clientes-response.dto';
+import { ReporteIvaDoc } from './docs/reporte-iva.doc';
+import { ReporteIvaBodyDto } from './dto/request/reporte-iva-body.dto';
+import { ReporteIvaResponseDto } from './dto/response/reporte-iva-response.dto';
+import { ReporteInventarioDoc } from './docs/reporte-inventario.doc';
+import { ReporteInventarioResponseDto } from './dto/response/reporte-inventario-response.dto';
+import { ReporteCuentasPagarDoc } from './docs/reporte-cuentas-pagar.doc';
+import { ReporteCuentasPagarResponseDto } from './dto/response/reporte-cuentas-pagar-response.dto';
 
 @ApiTags('Reportes / Dashboard')
 @Controller('reportes')
@@ -69,5 +76,33 @@ export class ReportesController {
       ? (periodo as 'semana' | 'mes' | 'anio')
       : 'mes';
     return this.reportesService.getTopClientes(user, p);
+  }
+
+  @Post('iva-mensual')
+  @Auth()
+  @ReporteIvaDoc()
+  async reporteIva(
+    @Body() body: ReporteIvaBodyDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<ReporteIvaResponseDto> {
+    return this.reportesService.getReporteIva(body, user);
+  }
+
+  @Get('inventario-valorado')
+  @Auth()
+  @ReporteInventarioDoc()
+  async reporteInventario(
+    @CurrentUser() user: JwtPayload,
+  ): Promise<ReporteInventarioResponseDto> {
+    return this.reportesService.getInventarioValorado(user);
+  }
+
+  @Get('cuentas-por-pagar')
+  @Auth()
+  @ReporteCuentasPagarDoc()
+  async reporteCuentasPagar(
+    @CurrentUser() user: JwtPayload,
+  ): Promise<ReporteCuentasPagarResponseDto> {
+    return this.reportesService.getCuentasPorPagar(user);
   }
 }

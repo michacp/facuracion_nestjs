@@ -107,4 +107,8 @@ export class SaveCompraBodyDto {
     @ValidateNested({ each: true })
     @Type(() => DetalleCompraDto)
     detalles!: DetalleCompraDto[];
+    @ApiPropertyOptional({ description: 'ID del estado de pago (enviado por error desde el cliente)' })
+    @IsInt()
+    @IsOptional()
+    estado_pago_id?: number;
 }
