@@ -7,10 +7,21 @@ import type { StockBajoResponseDto } from './dto/response/stock-bajo-response.dt
 import type { AlertasResponseDto } from './dto/response/alertas-response.dto';
 import type { TopProductosResponseDto } from './dto/response/top-productos-response.dto';
 import type { TopClientesResponseDto } from './dto/response/top-clientes-response.dto';
-import { ReporteIvaBodyDto } from './dto/request/reporte-iva-body.dto';
+import type { ReporteIvaCompletoDto } from './dto/response/reporte-iva-completo.dto';
+
 import { IvaCompraDetalleDto, IvaTarifaResumenDto, IvaVentaDetalleDto, ReporteIvaResponseDto } from './dto/response/reporte-iva-response.dto';
 import { InventarioItemDto, ReporteInventarioResponseDto } from './dto/response/reporte-inventario-response.dto';
 import { ProveedorPendienteDto, ReporteCuentasPagarResponseDto } from './dto/response/reporte-cuentas-pagar-response.dto';
+import { generarIvaExcel } from './helpers/excel/iva-excel.helper';
+import { generarIvaPdf } from './helpers/pdf/iva-pdf.helper';
+import { generarInventarioExcel } from './helpers/excel/inventario-excel.helper';
+import { generarInventarioPdf } from './helpers/pdf/inventario-pdf.helper';
+import { generarCuentasPagarExcel } from './helpers/excel/cuentas-pagar-excel.helper';
+import { generarCuentasPagarPdf } from './helpers/pdf/cuentas-pagar-pdf.helper';
+import { ListIvaDetalleBodyDto } from './dto/request/list-iva-detalle-body.dto';
+import { ReporteIvaBodyDto } from './dto/request/reporte-iva-body.dto';
+import { ListIvaComprasResponseDto, ListIvaVentasResponseDto } from './dto/response/list-iva-detalle-response.dto';
+import { Prisma } from '@prisma/client';
 
 @Injectable()
 export class ReportesService {
@@ -89,10 +100,8 @@ export class ReportesService {
 
         const ahora = new Date();
 
-        // 👇 SOLUCIÓN: Definimos explícitamente el tipo de datos que aceptará el arreglo
         const semanas: { inicio: Date; fin: Date; idx: number }[] = [];
 
-        // Construir las 4 semanas hacia atrás
         for (let i = 3; i >= 0; i--) {
             const finSemana = new Date(ahora);
             finSemana.setDate(ahora.getDate() - (ahora.getDay()) - (i * 7) + 6);
@@ -102,7 +111,6 @@ export class ReportesService {
             inicioSemana.setDate(finSemana.getDate() - 6);
             inicioSemana.setHours(0, 0, 0, 0);
 
-            // Ahora TypeScript ya sabe que este objeto es totalmente válido aquí 🎉
             semanas.push({ inicio: inicioSemana, fin: finSemana, idx: 4 - i });
         }
 
@@ -141,6 +149,7 @@ export class ReportesService {
 
         return { semanas: resultados };
     }
+
     // ── GET stock-bajo ────────────────────────────────────────────────────
     async getStockBajo(
         user: JwtPayload,
@@ -149,14 +158,13 @@ export class ReportesService {
         const empresaId = user.empresaId;
         if (!empresaId) throw new UnauthorizedException();
 
-        // Agrupar stock por item
         const lotesAgrupados = await this.prisma.itemLote.groupBy({
             by: ['item_id'],
             where: {
                 item: {
                     empresa_id: empresaId,
                     item_activo: true,
-                    tipo_item_id: 1, // solo productos físicos
+                    tipo_item_id: 1,
                 },
             },
             _sum: { cantidad: true },
@@ -217,8 +225,6 @@ export class ReportesService {
         en30dias.setDate(ahora.getDate() + 30);
 
         const [firmas, facturas, compras] = await Promise.all([
-
-            // Firmas por vencer en 30 días
             this.prisma.firma.findMany({
                 where: {
                     firmas_empresaId: empresaId,
@@ -232,7 +238,6 @@ export class ReportesService {
                 },
             }),
 
-            // Facturas PENDIENTE o DEVUELTA
             this.prisma.factura.findMany({
                 where: {
                     venta: { empresa_id: empresaId },
@@ -250,7 +255,6 @@ export class ReportesService {
                 },
             }),
 
-            // Compras con saldo pendiente
             this.prisma.compra.findMany({
                 where: {
                     empresa_id: empresaId,
@@ -321,7 +325,6 @@ export class ReportesService {
             : periodo === 'mes' ? inicioMes
                 : inicioAnio;
 
-        // Agrupar detalles de venta por item (via lote para productos)
         const detallesProducto = await this.prisma.detalleVenta.groupBy({
             by: ['lote_id'],
             where: {
@@ -329,7 +332,7 @@ export class ReportesService {
                     empresa_id: empresaId,
                     fecha_emision: { gte: desde, lte: ahora },
                 },
-                lote_id: { not: null }, // solo productos, no servicios
+                lote_id: { not: null },
             },
             _sum: { cantidad: true, precio_unitario: true },
             _count: { detalle_id: true },
@@ -339,7 +342,6 @@ export class ReportesService {
             return { productos: [], periodo };
         }
 
-        // Obtener items desde los lotes
         const loteIds = detallesProducto
             .map((d) => d.lote_id)
             .filter((id): id is number => id !== null);
@@ -367,7 +369,6 @@ export class ReportesService {
 
         const loteMap = new Map(lotes.map((l) => [l.lote_id, l.item]));
 
-        // Agrupar por item_id (puede haber varios lotes del mismo item)
         const itemMap = new Map<number, {
             item_id: number; codigo: string; nombre: string;
             unidades: number; total: number; marcas: string | null;
@@ -465,151 +466,6 @@ export class ReportesService {
         return { clientes: resultado, periodo };
     }
 
-    // ── REPORTE IVA MENSUAL ────────────────────────────────────────────────
-    async getReporteIva(
-        dto: ReporteIvaBodyDto,
-        user: JwtPayload,
-    ): Promise<ReporteIvaResponseDto> {
-        const empresaId = user.empresaId;
-        if (!empresaId) throw new UnauthorizedException();
-
-        const desde = new Date(dto.anio, dto.mes - 1, 1);
-        const hasta = new Date(dto.anio, dto.mes, 0, 23, 59, 59, 999); // último día del mes
-
-        // ── 1. Detalle de ventas del período (a nivel de línea, cada item) ───
-        const detallesVentaRaw = await this.prisma.detalleVenta.findMany({
-            where: {
-                venta: {
-                    empresa_id: empresaId,
-                    fecha_emision: { gte: desde, lte: hasta },
-                },
-            },
-            select: {
-                venta_id: true,
-                cantidad: true,
-                precio_unitario: true,
-                descuento: true,
-                tarifaImpuesto: { select: { tarifa_porcentaje: true } },
-                venta: {
-                    select: {
-                        numero_venta: true,
-                        fecha_emision: true,
-                        cliente: { select: { razon_social: true, identificacion: true } },
-                    },
-                },
-                lote: { select: { item: { select: { item_nombre: true } } } },
-                item: { select: { item_nombre: true } },
-            },
-        });
-
-        const detalle_ventas: IvaVentaDetalleDto[] = detallesVentaRaw.map((d) => {
-            const base = Number(d.cantidad) * Number(d.precio_unitario) - Number(d.descuento);
-            const tarifa = Number(d.tarifaImpuesto.tarifa_porcentaje);
-            const iva = parseFloat((base * tarifa / 100).toFixed(2));
-            const nombreItem = d.lote?.item.item_nombre ?? d.item?.item_nombre ?? '—';
-
-            return {
-                venta_id: d.venta_id,
-                numero_venta: d.venta.numero_venta,
-                fecha_emision: d.venta.fecha_emision,
-                cliente: d.venta.cliente.razon_social,
-                identificacion: d.venta.cliente.identificacion,
-                item_nombre: nombreItem,
-                cantidad: d.cantidad,
-                precio_unitario: Number(d.precio_unitario),
-                descuento: Number(d.descuento),
-                base_imponible: parseFloat(base.toFixed(2)),
-                tarifa_porcentaje: tarifa,
-                iva_calculado: iva,
-            };
-        });
-
-        // ── 2. Agrupar resumen ventas por tarifa ──────────────────────────────
-        const resumenVentasMap = new Map<number, { base: number; iva: number; count: number }>();
-        for (const d of detalle_ventas) {
-            const acc = resumenVentasMap.get(d.tarifa_porcentaje) ?? { base: 0, iva: 0, count: 0 };
-            acc.base += d.base_imponible;
-            acc.iva += d.iva_calculado;
-            acc.count += 1;
-            resumenVentasMap.set(d.tarifa_porcentaje, acc);
-        }
-
-        const resumen_ventas: IvaTarifaResumenDto[] = [...resumenVentasMap.entries()].map(
-            ([tarifa, v]) => ({
-                tarifa_porcentaje: tarifa,
-                base_imponible: parseFloat(v.base.toFixed(2)),
-                iva: parseFloat(v.iva.toFixed(2)),
-                cantidad_registros: v.count,
-            }),
-        );
-
-        // ── 3. Compras del período (a nivel de cabecera) ──────────────────────
-        const comprasRaw = await this.prisma.compra.findMany({
-            where: {
-                empresa_id: empresaId,
-                fecha_emision: { gte: desde, lte: hasta },
-            },
-            select: {
-                compra_id: true,
-                numero_documento: true,
-                fecha_emision: true,
-                subtotal: true,
-                descuento_global: true,
-                porcentaje_impuesto: true,
-                valor_impuesto: true,
-                proveedor: { select: { razon_social: true, identificacion: true } },
-            },
-        });
-
-        const detalle_compras: IvaCompraDetalleDto[] = comprasRaw.map((c) => {
-            const base = Number(c.subtotal) - Number(c.descuento_global);
-            return {
-                compra_id: c.compra_id,
-                numero_documento: c.numero_documento,
-                fecha_emision: c.fecha_emision,
-                proveedor: c.proveedor.razon_social,
-                proveedor_identificacion: c.proveedor.identificacion,
-                base_imponible: parseFloat(base.toFixed(2)),
-                tarifa_porcentaje: Number(c.porcentaje_impuesto),
-                iva: Number(c.valor_impuesto),
-            };
-        });
-
-        // ── 4. Agrupar resumen compras por tarifa ─────────────────────────────
-        const resumenComprasMap = new Map<number, { base: number; iva: number; count: number }>();
-        for (const c of detalle_compras) {
-            const acc = resumenComprasMap.get(c.tarifa_porcentaje) ?? { base: 0, iva: 0, count: 0 };
-            acc.base += c.base_imponible;
-            acc.iva += c.iva;
-            acc.count += 1;
-            resumenComprasMap.set(c.tarifa_porcentaje, acc);
-        }
-
-        const resumen_compras: IvaTarifaResumenDto[] = [...resumenComprasMap.entries()].map(
-            ([tarifa, v]) => ({
-                tarifa_porcentaje: tarifa,
-                base_imponible: parseFloat(v.base.toFixed(2)),
-                iva: parseFloat(v.iva.toFixed(2)),
-                cantidad_registros: v.count,
-            }),
-        );
-
-        const ivaTotalVentas = parseFloat(detalle_ventas.reduce((a, v) => a + v.iva_calculado, 0).toFixed(2));
-        const ivaTotalCompras = parseFloat(detalle_compras.reduce((a, c) => a + c.iva, 0).toFixed(2));
-
-        return {
-            mes: dto.mes,
-            anio: dto.anio,
-            resumen_ventas,
-            resumen_compras,
-            iva_total_ventas: ivaTotalVentas,
-            iva_total_compras: ivaTotalCompras,
-            iva_a_pagar: parseFloat((ivaTotalVentas - ivaTotalCompras).toFixed(2)),
-            detalle_ventas,
-            detalle_compras,
-        };
-    }
-
     // ── REPORTE INVENTARIO VALORADO (CPP) ─────────────────────────────────
     async getInventarioValorado(
         user: JwtPayload,
@@ -617,7 +473,6 @@ export class ReportesService {
         const empresaId = user.empresaId;
         if (!empresaId) throw new UnauthorizedException();
 
-        // Ítems activos tipo PRODUCTO con stock
         const items = await this.prisma.item.findMany({
             where: {
                 empresa_id: empresaId,
@@ -637,7 +492,7 @@ export class ReportesService {
                         cantidad: true,
                         detallesCompra: {
                             select: { costo_unitario: true },
-                            take: 1, // un lote proviene de una sola línea de compra
+                            take: 1,
                             orderBy: { detalle_id: 'asc' },
                         },
                     },
@@ -660,7 +515,6 @@ export class ReportesService {
             const stockTotal = lotesDetalle.reduce((a, l) => a + l.cantidad, 0);
             const valorTotal = lotesDetalle.reduce((a, l) => a + l.valor_lote, 0);
 
-            // CPP = valor total ponderado / stock total
             const costoPromedio = stockTotal > 0
                 ? parseFloat((valorTotal / stockTotal).toFixed(4))
                 : 0;
@@ -720,7 +574,6 @@ export class ReportesService {
 
         const ahora = new Date();
 
-        // ── Agrupar por proveedor ──────────────────────────────────────────
         const proveedorMap = new Map<number, ProveedorPendienteDto>();
 
         for (const c of compras) {
@@ -774,5 +627,303 @@ export class ReportesService {
             total_proveedores: proveedores.length,
             proveedores,
         };
+    }
+
+    // ── Helper privado: rango de fechas del mes ────────────────────────────
+    private getRangoMes(mes: number, anio: number) {
+        const desde = new Date(anio, mes - 1, 1);
+        const hasta = new Date(anio, mes, 0, 23, 59, 59, 999);
+        return { desde, hasta };
+    }
+
+    // ── RESUMEN IVA (liviano — sin arrays de detalle, para pantalla) ───────
+    async getReporteIva(
+        dto: ReporteIvaBodyDto,
+        user: JwtPayload,
+    ): Promise<ReporteIvaResponseDto> {
+        const empresaId = user.empresaId;
+        if (!empresaId) throw new UnauthorizedException();
+
+        const { desde, hasta } = this.getRangoMes(dto.mes, dto.anio);
+
+        const ventasAgrupadas = await this.prisma.detalleVenta.groupBy({
+            by: ['tarifa_impuesto_id'],
+            where: { venta: { empresa_id: empresaId, fecha_emision: { gte: desde, lte: hasta } } },
+            _sum: { cantidad: true, precio_unitario: true, descuento: true },
+            _count: { detalle_id: true },
+        });
+
+        const tarifas = await this.prisma.tarifaImpuesto.findMany({
+            where: { tarifa_impuesto_id: { in: ventasAgrupadas.map((v) => v.tarifa_impuesto_id) } },
+            select: { tarifa_impuesto_id: true, tarifa_porcentaje: true },
+        });
+        const tarifaMap = new Map(tarifas.map((t) => [t.tarifa_impuesto_id, Number(t.tarifa_porcentaje)]));
+
+        const resumen_ventas: IvaTarifaResumenDto[] = ventasAgrupadas.map((v) => {
+            const tarifa = tarifaMap.get(v.tarifa_impuesto_id) ?? 0;
+            const base = Number(v._sum.precio_unitario ?? 0) - Number(v._sum.descuento ?? 0);
+            return {
+                tarifa_porcentaje: tarifa,
+                base_imponible: parseFloat(base.toFixed(2)),
+                iva: parseFloat((base * tarifa / 100).toFixed(2)),
+                cantidad_registros: v._count.detalle_id,
+            };
+        });
+
+        const comprasAgrupadas = await this.prisma.compra.groupBy({
+            by: ['porcentaje_impuesto'],
+            where: { empresa_id: empresaId, fecha_emision: { gte: desde, lte: hasta } },
+            _sum: { subtotal: true, descuento_global: true, valor_impuesto: true },
+            _count: { compra_id: true },
+        });
+
+        const resumen_compras: IvaTarifaResumenDto[] = comprasAgrupadas.map((c) => ({
+            tarifa_porcentaje: Number(c.porcentaje_impuesto),
+            base_imponible: parseFloat((Number(c._sum.subtotal ?? 0) - Number(c._sum.descuento_global ?? 0)).toFixed(2)),
+            iva: Number(c._sum.valor_impuesto ?? 0),
+            cantidad_registros: c._count.compra_id,
+        }));
+
+        const ivaTotalVentas = parseFloat(resumen_ventas.reduce((a, r) => a + r.iva, 0).toFixed(2));
+        const ivaTotalCompras = parseFloat(resumen_compras.reduce((a, r) => a + r.iva, 0).toFixed(2));
+
+        return {
+            mes: dto.mes, anio: dto.anio,
+            resumen_ventas, resumen_compras,
+            iva_total_ventas: ivaTotalVentas,
+            iva_total_compras: ivaTotalCompras,
+            iva_a_pagar: parseFloat((ivaTotalVentas - ivaTotalCompras).toFixed(2)),
+        };
+    }
+
+    // ── REPORTE IVA COMPLETO (sin paginar — SOLO para Excel/PDF) ───────────
+    private async getReporteIvaCompleto(
+        dto: ReporteIvaBodyDto,
+        user: JwtPayload,
+    ): Promise<ReporteIvaCompletoDto> {
+        const empresaId = user.empresaId;
+        if (!empresaId) throw new UnauthorizedException();
+
+        const { desde, hasta } = this.getRangoMes(dto.mes, dto.anio);
+
+        // ── Resumen (reusa la misma lógica agrupada) ────────────────────────
+        const resumen = await this.getReporteIva(dto, user);
+
+        // ── Detalle COMPLETO de ventas (todas las filas, sin take/skip) ─────
+        const detallesVentaRaw = await this.prisma.detalleVenta.findMany({
+            where: {
+                venta: { empresa_id: empresaId, fecha_emision: { gte: desde, lte: hasta } },
+            },
+            orderBy: { venta: { fecha_emision: 'desc' } },
+            select: {
+                venta_id: true, cantidad: true, precio_unitario: true, descuento: true,
+                tarifaImpuesto: { select: { tarifa_porcentaje: true } },
+                venta: {
+                    select: {
+                        numero_venta: true, fecha_emision: true,
+                        cliente: { select: { razon_social: true, identificacion: true } },
+                    },
+                },
+                lote: { select: { item: { select: { item_nombre: true } } } },
+                item: { select: { item_nombre: true } },
+            },
+        });
+
+        const detalle_ventas: IvaVentaDetalleDto[] = detallesVentaRaw.map((d) => {
+            const base = Number(d.cantidad) * Number(d.precio_unitario) - Number(d.descuento);
+            const tarifa = Number(d.tarifaImpuesto.tarifa_porcentaje);
+            return {
+                venta_id: d.venta_id,
+                numero_venta: d.venta.numero_venta,
+                fecha_emision: d.venta.fecha_emision,
+                cliente: d.venta.cliente.razon_social,
+                identificacion: d.venta.cliente.identificacion,
+                item_nombre: d.lote?.item.item_nombre ?? d.item?.item_nombre ?? '—',
+                cantidad: d.cantidad,
+                precio_unitario: Number(d.precio_unitario),
+                descuento: Number(d.descuento),
+                base_imponible: parseFloat(base.toFixed(2)),
+                tarifa_porcentaje: tarifa,
+                iva_calculado: parseFloat((base * tarifa / 100).toFixed(2)),
+            };
+        });
+
+        // ── Detalle COMPLETO de compras (todas las filas, sin take/skip) ────
+        const comprasRaw = await this.prisma.compra.findMany({
+            where: { empresa_id: empresaId, fecha_emision: { gte: desde, lte: hasta } },
+            orderBy: { fecha_emision: 'desc' },
+            select: {
+                compra_id: true, numero_documento: true, fecha_emision: true,
+                subtotal: true, descuento_global: true, porcentaje_impuesto: true, valor_impuesto: true,
+                proveedor: { select: { razon_social: true, identificacion: true } },
+            },
+        });
+
+        const detalle_compras: IvaCompraDetalleDto[] = comprasRaw.map((c) => ({
+            compra_id: c.compra_id,
+            numero_documento: c.numero_documento,
+            fecha_emision: c.fecha_emision,
+            proveedor: c.proveedor.razon_social,
+            proveedor_identificacion: c.proveedor.identificacion,
+            base_imponible: parseFloat((Number(c.subtotal) - Number(c.descuento_global)).toFixed(2)),
+            tarifa_porcentaje: Number(c.porcentaje_impuesto),
+            iva: Number(c.valor_impuesto),
+        }));
+
+        return {
+            ...resumen,
+            detalle_ventas,
+            detalle_compras,
+        };
+    }
+
+    // ── DETALLE VENTAS — PAGINADO (para pantalla) ──────────────────────────
+    async listIvaVentas(
+        dto: ListIvaDetalleBodyDto,
+        user: JwtPayload,
+    ): Promise<ListIvaVentasResponseDto> {
+        const empresaId = user.empresaId;
+        if (!empresaId) throw new UnauthorizedException();
+
+        const { desde, hasta } = this.getRangoMes(dto.mes, dto.anio);
+        const { search, page = 0, limit = 30 } = dto;
+
+        const where: Prisma.DetalleVentaWhereInput = {
+            venta: {
+                empresa_id: empresaId,
+                fecha_emision: { gte: desde, lte: hasta },
+                ...(search?.trim() && {
+                    OR: [
+                        { numero_venta: { contains: search.trim(), mode: 'insensitive' } },
+                        { cliente: { razon_social: { contains: search.trim(), mode: 'insensitive' } } },
+                    ],
+                }),
+            },
+        };
+
+        const [total, rows] = await Promise.all([
+            this.prisma.detalleVenta.count({ where }),
+            this.prisma.detalleVenta.findMany({
+                where,
+                skip: page * limit,
+                take: limit,
+                orderBy: { venta: { fecha_emision: 'desc' } },
+                select: {
+                    venta_id: true, cantidad: true, precio_unitario: true, descuento: true,
+                    tarifaImpuesto: { select: { tarifa_porcentaje: true } },
+                    venta: {
+                        select: {
+                            numero_venta: true, fecha_emision: true,
+                            cliente: { select: { razon_social: true, identificacion: true } },
+                        },
+                    },
+                    lote: { select: { item: { select: { item_nombre: true } } } },
+                    item: { select: { item_nombre: true } },
+                },
+            }),
+        ]);
+
+        const detalle: IvaVentaDetalleDto[] = rows.map((d) => {
+            const base = Number(d.cantidad) * Number(d.precio_unitario) - Number(d.descuento);
+            const tarifa = Number(d.tarifaImpuesto.tarifa_porcentaje);
+            return {
+                venta_id: d.venta_id,
+                numero_venta: d.venta.numero_venta,
+                fecha_emision: d.venta.fecha_emision,
+                cliente: d.venta.cliente.razon_social,
+                identificacion: d.venta.cliente.identificacion,
+                item_nombre: d.lote?.item.item_nombre ?? d.item?.item_nombre ?? '—',
+                cantidad: d.cantidad,
+                precio_unitario: Number(d.precio_unitario),
+                descuento: Number(d.descuento),
+                base_imponible: parseFloat(base.toFixed(2)),
+                tarifa_porcentaje: tarifa,
+                iva_calculado: parseFloat((base * tarifa / 100).toFixed(2)),
+            };
+        });
+
+        return { total, detalle };
+    }
+
+    // ── DETALLE COMPRAS — PAGINADO (para pantalla) ─────────────────────────
+    async listIvaCompras(
+        dto: ListIvaDetalleBodyDto,
+        user: JwtPayload,
+    ): Promise<ListIvaComprasResponseDto> {
+        const empresaId = user.empresaId;
+        if (!empresaId) throw new UnauthorizedException();
+
+        const { desde, hasta } = this.getRangoMes(dto.mes, dto.anio);
+        const { search, page = 0, limit = 30 } = dto;
+
+        const where: Prisma.CompraWhereInput = {
+            empresa_id: empresaId,
+            fecha_emision: { gte: desde, lte: hasta },
+            ...(search?.trim() && {
+                OR: [
+                    { numero_documento: { contains: search.trim(), mode: 'insensitive' } },
+                    { proveedor: { razon_social: { contains: search.trim(), mode: 'insensitive' } } },
+                ],
+            }),
+        };
+
+        const [total, rows] = await Promise.all([
+            this.prisma.compra.count({ where }),
+            this.prisma.compra.findMany({
+                where, skip: page * limit, take: limit,
+                orderBy: { fecha_emision: 'desc' },
+                select: {
+                    compra_id: true, numero_documento: true, fecha_emision: true,
+                    subtotal: true, descuento_global: true, porcentaje_impuesto: true, valor_impuesto: true,
+                    proveedor: { select: { razon_social: true, identificacion: true } },
+                },
+            }),
+        ]);
+
+        const detalle: IvaCompraDetalleDto[] = rows.map((c) => ({
+            compra_id: c.compra_id,
+            numero_documento: c.numero_documento,
+            fecha_emision: c.fecha_emision,
+            proveedor: c.proveedor.razon_social,
+            proveedor_identificacion: c.proveedor.identificacion,
+            base_imponible: parseFloat((Number(c.subtotal) - Number(c.descuento_global)).toFixed(2)),
+            tarifa_porcentaje: Number(c.porcentaje_impuesto),
+            iva: Number(c.valor_impuesto),
+        }));
+
+        return { total, detalle };
+    }
+
+    // ── IVA — Excel / PDF (usan el dataset COMPLETO, sin paginar) ──────────
+    async getReporteIvaExcel(dto: ReporteIvaBodyDto, user: JwtPayload): Promise<Buffer> {
+        const data = await this.getReporteIvaCompleto(dto, user);
+        return generarIvaExcel(data);
+    }
+
+    async getReporteIvaPdf(dto: ReporteIvaBodyDto, user: JwtPayload): Promise<Buffer> {
+        const data = await this.getReporteIvaCompleto(dto, user);
+        return generarIvaPdf(data);
+    }
+
+    // ── Inventario — Excel / PDF ────────────────────────────────────────────
+    async getInventarioExcel(user: JwtPayload): Promise<Buffer> {
+        const data = await this.getInventarioValorado(user);
+        return generarInventarioExcel(data);
+    }
+
+    async getInventarioPdf(user: JwtPayload): Promise<Buffer> {
+        const data = await this.getInventarioValorado(user);
+        return generarInventarioPdf(data);
+    }
+
+    // ── Cuentas por pagar — Excel / PDF ──────────────────────────────────
+    async getCuentasPagarExcel(user: JwtPayload): Promise<Buffer> {
+        const data = await this.getCuentasPorPagar(user);
+        return generarCuentasPagarExcel(data);
+    }
+
+    async getCuentasPagarPdf(user: JwtPayload): Promise<Buffer> {
+        const data = await this.getCuentasPorPagar(user);
+        return generarCuentasPagarPdf(data);
     }
 }

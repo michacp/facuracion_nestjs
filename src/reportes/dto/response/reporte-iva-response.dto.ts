@@ -100,9 +100,5 @@ export class ReporteIvaResponseDto {
     @ApiProperty({ example: 360.00, description: 'iva_total_ventas - iva_total_compras' })
     iva_a_pagar!: number;
 
-    @ApiProperty({ type: [IvaVentaDetalleDto] })
-    detalle_ventas!: IvaVentaDetalleDto[];
 
-    @ApiProperty({ type: [IvaCompraDetalleDto] })
-    detalle_compras!: IvaCompraDetalleDto[];
 }

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Res } from '@nestjs/common';
 import { ApiTags, ApiQuery } from '@nestjs/swagger';
 import { ReportesService } from './reportes.service';
 import { Auth, CurrentUser } from '../auth/decorators';
@@ -16,7 +16,9 @@ import { ReporteInventarioDoc } from './docs/reporte-inventario.doc';
 import { ReporteInventarioResponseDto } from './dto/response/reporte-inventario-response.dto';
 import { ReporteCuentasPagarDoc } from './docs/reporte-cuentas-pagar.doc';
 import { ReporteCuentasPagarResponseDto } from './dto/response/reporte-cuentas-pagar-response.dto';
-
+import type { Response } from 'express';
+import { ListIvaDetalleBodyDto } from './dto/request/list-iva-detalle-body.dto';
+import { ListIvaComprasResponseDto, ListIvaVentasResponseDto } from './dto/response/list-iva-detalle-response.dto';
 @ApiTags('Reportes / Dashboard')
 @Controller('reportes')
 export class ReportesController {
@@ -104,5 +106,111 @@ export class ReportesController {
     @CurrentUser() user: JwtPayload,
   ): Promise<ReporteCuentasPagarResponseDto> {
     return this.reportesService.getCuentasPorPagar(user);
+  }
+
+  // ── IVA ──────────────────────────────────────────────────────────────
+  @Post('iva-mensual/excel')
+  @Auth()
+  async ivaExcel(
+    @Body() body: ReporteIvaBodyDto,
+    @CurrentUser() user: JwtPayload,
+    @Res() res: Response,
+  ): Promise<void> {
+    const buffer = await this.reportesService.getReporteIvaExcel(body, user);
+    res.set({
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="iva-${body.mes}-${body.anio}.xlsx"`,
+    });
+    res.send(buffer);
+  }
+
+  @Post('iva-mensual/pdf')
+  @Auth()
+  async ivaPdf(
+    @Body() body: ReporteIvaBodyDto,
+    @CurrentUser() user: JwtPayload,
+    @Res() res: Response,
+  ): Promise<void> {
+    const buffer = await this.reportesService.getReporteIvaPdf(body, user);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="iva-${body.mes}-${body.anio}.pdf"`,
+    });
+    res.send(buffer);
+  }
+
+  // ── Inventario ───────────────────────────────────────────────────────
+  @Get('inventario-valorado/excel')
+  @Auth()
+  async inventarioExcel(
+    @CurrentUser() user: JwtPayload,
+    @Res() res: Response,
+  ): Promise<void> {
+    const buffer = await this.reportesService.getInventarioExcel(user);
+    res.set({
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': 'attachment; filename="inventario-valorado.xlsx"',
+    });
+    res.send(buffer);
+  }
+
+  @Get('inventario-valorado/pdf')
+  @Auth()
+  async inventarioPdf(
+    @CurrentUser() user: JwtPayload,
+    @Res() res: Response,
+  ): Promise<void> {
+    const buffer = await this.reportesService.getInventarioPdf(user);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': 'attachment; filename="inventario-valorado.pdf"',
+    });
+    res.send(buffer);
+  }
+
+  // ── Cuentas por pagar ────────────────────────────────────────────────
+  @Get('cuentas-por-pagar/excel')
+  @Auth()
+  async cuentasPagarExcel(
+    @CurrentUser() user: JwtPayload,
+    @Res() res: Response,
+  ): Promise<void> {
+    const buffer = await this.reportesService.getCuentasPagarExcel(user);
+    res.set({
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': 'attachment; filename="cuentas-por-pagar.xlsx"',
+    });
+    res.send(buffer);
+  }
+
+  @Get('cuentas-por-pagar/pdf')
+  @Auth()
+  async cuentasPagarPdf(
+    @CurrentUser() user: JwtPayload,
+    @Res() res: Response,
+  ): Promise<void> {
+    const buffer = await this.reportesService.getCuentasPagarPdf(user);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': 'attachment; filename="cuentas-por-pagar.pdf"',
+    });
+    res.send(buffer);
+  }
+  @Post('iva-mensual/ventas')
+  @Auth()
+  async listIvaVentas(
+    @Body() body: ListIvaDetalleBodyDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<ListIvaVentasResponseDto> {
+    return this.reportesService.listIvaVentas(body, user);
+  }
+
+  @Post('iva-mensual/compras')
+  @Auth()
+  async listIvaCompras(
+    @Body() body: ListIvaDetalleBodyDto,
+    @CurrentUser() user: JwtPayload,
+  ): Promise<ListIvaComprasResponseDto> {
+    return this.reportesService.listIvaCompras(body, user);
   }
 }

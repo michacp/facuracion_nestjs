@@ -45,6 +45,7 @@
     "dotenv": "^17.3.1",
     "easy-soap-request": "^5.16.0",
     "ec-sri-invoice-signer": "^1.7.5",
+    "exceljs": "^4.4.0",
     "googleapis": "^171.4.0",
     "gsmarena-api": "^2.0.5",
     "moment": "^2.30.1",
