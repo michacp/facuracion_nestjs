@@ -61,10 +61,8 @@ export class ItemsService {
 
         if (!tipoItem) throw new NotFoundException('Tipo de ítem no encontrado');
 
-        // ── Determinar si es servicio ──────────────────────────────────────
         const esServicio = tipoItem.tipo_item_nombre.toUpperCase() === 'SERVICIO';
 
-        // ── Generar código principal ───────────────────────────────────────
         const prefix = tipoItem.tipo_item_nombre
             .toUpperCase()
             .substring(0, 3)
@@ -90,8 +88,6 @@ export class ItemsService {
         const codigoAuxiliar = paddedNumber;
 
         const result = await this.prisma.$transaction(async (tx) => {
-
-            // 1. Crear ítem
             const item = await tx.item.create({
                 data: {
                     empresa_id: empresaId,
@@ -106,9 +102,6 @@ export class ItemsService {
                 select: { item_id: true },
             });
 
-
-
-            // 2. Modelos compatibles
             if (dto.modelos_ids && dto.modelos_ids.length > 0) {
                 await tx.itemModelo.createMany({
                     data: dto.modelos_ids.map((modeloId) => ({
@@ -124,9 +117,11 @@ export class ItemsService {
 
         return {
             itemId: result,
+            id: result,       // ← mismo valor, para selectores {id, name}
             name: dto.nombre,
             cod: codigoPrincipal,
             es_servicio: esServicio,
+            precio_actual: dto.precio_unitario, // ← mismo campo que find-for-purchase
         };
     }
 
