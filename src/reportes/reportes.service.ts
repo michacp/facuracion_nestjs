@@ -3,7 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import type { JwtPayload } from '../auth/interfaces/jwt-payload.interface';
 import type { KpisResponseDto, KpiPeriodoDto } from './dto/response/kpis-response.dto';
 import type { VentasSemanasResponseDto } from './dto/response/ventas-semanas-response.dto';
-import type { StockBajoResponseDto } from './dto/response/stock-bajo-response.dto';
+import type { StockBajoItemDto, StockBajoResponseDto } from './dto/response/stock-bajo-response.dto';
 import type { AlertasResponseDto } from './dto/response/alertas-response.dto';
 import type { TopProductosResponseDto } from './dto/response/top-productos-response.dto';
 import type { TopClientesResponseDto } from './dto/response/top-clientes-response.dto';
@@ -154,10 +154,15 @@ export class ReportesService {
     async getStockBajo(
         user: JwtPayload,
         umbral: number = 5,
+        page: number = 0,
+        limit: number = 30,
     ): Promise<StockBajoResponseDto> {
         const empresaId = user.empresaId;
         if (!empresaId) throw new UnauthorizedException();
 
+        // 1. Trae TODOS los grupos que cumplen el umbral (no se puede paginar
+        //    en este paso: el having necesita la suma completa de cada item
+        //    antes de saber cuáles entran).
         const lotesAgrupados = await this.prisma.itemLote.groupBy({
             by: ['item_id'],
             where: {
@@ -173,12 +178,33 @@ export class ReportesService {
             },
         });
 
-        if (lotesAgrupados.length === 0) return { total: 0, items: [] };
+        const total = lotesAgrupados.length;
+        const totalPages = total === 0 ? 0 : Math.ceil(total / limit);
 
-        const itemIds = lotesAgrupados.map((l) => l.item_id);
+        if (total === 0) {
+            return { total: 0, page, limit, totalPages: 0, items: [] };
+        }
 
+        // 2. Ordena por stock ascendente (menor stock primero) y pagina
+        //    el listado de IDs en memoria — es liviano, solo son números.
+        const stockMap = new Map(
+            lotesAgrupados.map((l) => [l.item_id, Number(l._sum.cantidad ?? 0)]),
+        );
+
+        const idsOrdenados = lotesAgrupados
+            .map((l) => l.item_id)
+            .sort((a, b) => (stockMap.get(a) ?? 0) - (stockMap.get(b) ?? 0));
+
+        const idsPagina = idsOrdenados.slice(page * limit, page * limit + limit);
+
+        if (idsPagina.length === 0) {
+            return { total, page, limit, totalPages, items: [] };
+        }
+
+        // 3. Solo trae el detalle completo (joins a modelos/marca) de los
+        //    items de la página actual — esto sí está paginado a nivel de query.
         const items = await this.prisma.item.findMany({
-            where: { item_id: { in: itemIds } },
+            where: { item_id: { in: idsPagina } },
             select: {
                 item_id: true,
                 item_codigo_principal: true,
@@ -186,33 +212,41 @@ export class ReportesService {
                 modelos: {
                     select: {
                         model: {
-                            select: { brand: { select: { brands_name: true } } },
+                            select: {
+                                models_name: true,
+                                brand: { select: { brands_name: true } },
+                            },
                         },
                     },
                 },
             },
         });
 
-        const stockMap = new Map(
-            lotesAgrupados.map((l) => [l.item_id, Number(l._sum.cantidad ?? 0)]),
-        );
+        // 4. Reordena según idsPagina (findMany con `in` no garantiza el orden)
+        //    y arma la respuesta final.
+        const itemsMap = new Map(items.map((i) => [i.item_id, i]));
 
-        const resultado = items.map((i) => {
-            const marcas = i.modelos.length
-                ? [...new Set(i.modelos.map((m) => m.model.brand.brands_name))].join(', ')
-                : null;
+        const resultado: StockBajoItemDto[] = idsPagina
+            .map((id) => itemsMap.get(id))
+            .filter((i): i is NonNullable<typeof i> => i !== undefined)
+            .map((i) => {
+                const modelos = i.modelos.length
+                    ? [...new Set(
+                        i.modelos.map((m) => `${m.model.brand.brands_name} - ${m.model.models_name}`)
+                    )]
+                    : null;
 
-            return {
-                item_id: i.item_id,
-                codigo: i.item_codigo_principal,
-                nombre: i.item_nombre,
-                stock_total: stockMap.get(i.item_id) ?? 0,
-                umbral,
-                modelos: marcas,
-            };
-        }).sort((a, b) => a.stock_total - b.stock_total);
+                return {
+                    item_id: i.item_id,
+                    codigo: i.item_codigo_principal,
+                    nombre: i.item_nombre,
+                    stock_total: stockMap.get(i.item_id) ?? 0,
+                    umbral,
+                    modelos,
+                };
+            });
 
-        return { total: resultado.length, items: resultado };
+        return { total, page, limit, totalPages, items: resultado };
     }
 
     // ── GET alertas ───────────────────────────────────────────────────────

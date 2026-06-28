@@ -19,6 +19,7 @@ import { ReporteCuentasPagarResponseDto } from './dto/response/reporte-cuentas-p
 import type { Response } from 'express';
 import { ListIvaDetalleBodyDto } from './dto/request/list-iva-detalle-body.dto';
 import { ListIvaComprasResponseDto, ListIvaVentasResponseDto } from './dto/response/list-iva-detalle-response.dto';
+import { StockBajoQueryDto } from './dto/request/stock-bajo-body.dto';
 @ApiTags('Reportes / Dashboard')
 @Controller('reportes')
 export class ReportesController {
@@ -40,12 +41,16 @@ export class ReportesController {
 
   @Get('stock-bajo')
   @Auth()
-  @ApiQuery({ name: 'umbral', required: false, example: 5 })
   async stockBajo(
     @CurrentUser() user: JwtPayload,
-    @Query('umbral') umbral?: string,
+    @Query() query: StockBajoQueryDto,
   ): Promise<StockBajoResponseDto> {
-    return this.reportesService.getStockBajo(user, umbral ? Number(umbral) : 5);
+    return this.reportesService.getStockBajo(
+      user,
+      query.umbral,
+      query.page,
+      query.limit,
+    );
   }
 
   @Get('alertas')

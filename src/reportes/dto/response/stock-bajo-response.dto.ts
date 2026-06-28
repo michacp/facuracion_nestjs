@@ -1,3 +1,4 @@
+// src/reportes/dto/response/stock-bajo-response.dto.ts
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class StockBajoItemDto {
@@ -7,7 +8,7 @@ export class StockBajoItemDto {
     @ApiProperty({ example: 'PRO000001' })
     codigo!: string;
 
-    @ApiProperty({ example: 'Cable HDMI 2m' })
+    @ApiProperty({ example: 'Pantalla' })
     nombre!: string;
 
     @ApiProperty({ example: 3 })
@@ -16,13 +17,26 @@ export class StockBajoItemDto {
     @ApiProperty({ example: 5, description: 'Umbral configurado' })
     umbral!: number;
 
-    @ApiPropertyOptional({ example: 'iPhone 14, Galaxy S24', nullable: true })
-    modelos!: string | null;
+    @ApiPropertyOptional({
+        example: ['Samsung - A15', 'Samsung - A16'],
+        type: [String],
+        nullable: true,
+    })
+    modelos!: string[] | null;
 }
 
 export class StockBajoResponseDto {
-    @ApiProperty({ example: 4 })
+    @ApiProperty({ example: 23, description: 'Total de items con stock bajo (todas las páginas)' })
     total!: number;
+
+    @ApiProperty({ example: 0 })
+    page!: number;
+
+    @ApiProperty({ example: 30 })
+    limit!: number;
+
+    @ApiProperty({ example: 1 })
+    totalPages!: number;
 
     @ApiProperty({ type: [StockBajoItemDto] })
     items!: StockBajoItemDto[];
