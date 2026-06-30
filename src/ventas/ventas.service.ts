@@ -27,14 +27,14 @@ export class VentasService {
         if (!empresaId) throw new UnauthorizedException('Sin empresa asignada en el token');
 
         // Todo en paralelo — mismo patrón que el legacy Promise.all
-        const [productos, impuestos, vouchertype, formapago] = await Promise.all([
-            this.itemsService.findProductsIdName({ search: undefined }, user), // sin filtro = últimos 50
+        const [impuestos, vouchertype, formapago] = await Promise.all([
+            // this.itemsService.findProductsIdName({ search: undefined }, user), // sin filtro = últimos 50
             this.catalogosService.findTaxes(),
             this.catalogosService.findVoucherType(),
             this.catalogosService.findPayType(),
         ]);
 
-        return { productos, impuestos, vouchertype, formapago };
+        return { impuestos, vouchertype, formapago };
     }
 
     // ── POST save ────────────────────────────────────────────────────────

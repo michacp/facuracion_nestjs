@@ -4,8 +4,8 @@ import { IdNameDto, TaxItemDto } from '../../../catalogos/dto/response/catalogos
 
 
 export class GetNewDataSalesResponseDto {
-    @ApiProperty({ type: [FindProductsIdNameResponseDto] })
-    productos!: FindProductsIdNameResponseDto[];
+    // @ApiProperty({ type: [FindProductsIdNameResponseDto] })
+    // productos!: FindProductsIdNameResponseDto[];
 
     @ApiProperty({ type: [TaxItemDto] })
     impuestos!: TaxItemDto[];
