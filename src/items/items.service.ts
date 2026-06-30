@@ -632,7 +632,9 @@ export class ItemsService {
         });
 
         // ── Combinar: servicios primero, luego productos por lote_id desc ────
-        return [...serviciosResult, ...productosResult];
+        const data = await [...serviciosResult, ...productosResult];
+        console.log(data)
+        return data
     }
 
     async findItemsForPurchase(
