@@ -502,7 +502,7 @@ export class ItemsService {
         const search = dto.search?.trim() ?? '';
         const hasSearch = search.length > 0;
         const isNumeric = hasSearch && /^\d+$/.test(search);
-        const limit = hasSearch ? 200 : 50;
+        const limit = hasSearch ? 200 : 200;
 
         // ── Filtro base compartido ───────────────────────────────────────────
         const textFilter: Prisma.ItemWhereInput = hasSearch
